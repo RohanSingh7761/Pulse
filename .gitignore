@@ -12,6 +12,26 @@ dist
 dist-ssr
 *.local
 
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Runtime output and coverage
+coverage
+.nyc_output
+tmp
+temp
+
+# Hardhat generated files
+contracts/artifacts/
+contracts/cache/
+contracts/coverage/
+
+# Local deployment output
+contracts/deployments/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
