@@ -32,7 +32,7 @@ const envSchema = z.object({
   if (value.NODE_ENV === 'production' && value.JWT_SECRET === 'development-only-secret-change-me-123456') {
     context.addIssue({ code: 'custom', path: ['JWT_SECRET'], message: 'JWT_SECRET must be changed in production' });
   }
-  if (value.HEDERA_NETWORK !== 'local' && (!value.HEDERA_OPERATOR_ID || !value.HEDERA_OPERATOR_KEY)) {
+  if (value.NODE_ENV === 'production' && value.HEDERA_NETWORK !== 'local' && (!value.HEDERA_OPERATOR_ID || !value.HEDERA_OPERATOR_KEY)) {
     context.addIssue({ code: 'custom', path: ['HEDERA_OPERATOR_ID'], message: 'Hedera operator credentials are required outside local mode' });
   }
 });

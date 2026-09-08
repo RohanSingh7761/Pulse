@@ -1,0 +1,16 @@
+{
+  "name": "pulse",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n backend,frontend -c cyan,green \"npm run dev --prefix backend\" \"npm run dev --prefix pulse_client\"",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix pulse_client",
+    "test:backend": "npm test --prefix backend",
+    "build:frontend": "npm run build --prefix pulse_client",
+    "lint:frontend": "npm run lint --prefix pulse_client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

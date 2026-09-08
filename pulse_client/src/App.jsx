@@ -1,122 +1,66 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useEffect, useState } from 'react'
+import { ArrowDownRight, ArrowUpRight, BarChart3, Bell, Check, ChevronDown, CircleDollarSign, Copy, Flame, LayoutGrid, Menu, Plus, Search, Settings2, ShieldCheck, Sparkles, TrendingUp, UserRound, Wallet, X, Zap } from 'lucide-react'
 import './App.css'
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+const fallbackMarkets = [
+  { id: 'alex-chen', name: 'Alex Chen', handle: '@alexchen', category: 'Founders', symbol: 'ALEX', price: 4.82, change: 18.6, marketCap: '482.4K', volume: '38.2K', holders: 1284, bio: 'Building the next generation of climate infrastructure.', accent: 'cyan' },
+  { id: 'maya-ortiz', name: 'Maya Ortiz', handle: '@mayaortiz', category: 'Creators', symbol: 'MAYA', price: 2.74, change: 11.2, marketCap: '274.0K', volume: '24.8K', holders: 936, bio: 'Independent filmmaker turning field notes into worlds.', accent: 'violet' },
+  { id: 'noah-williams', name: 'Noah Williams', handle: '@noahbuilds', category: 'Builders', symbol: 'NOAH', price: 8.31, change: -3.4, marketCap: '831.0K', volume: '52.7K', holders: 2108, bio: 'Open-source systems, thoughtful tools, better defaults.', accent: 'orange' },
+  { id: 'samira-khan', name: 'Samira Khan', handle: '@samirakhan', category: 'Researchers', symbol: 'SAMI', price: 6.18, change: 24.9, marketCap: '618.2K', volume: '46.1K', holders: 1672, bio: 'Making frontier research legible and useful.', accent: 'lime' },
+  { id: 'jun-park', name: 'Jun Park', handle: '@junpark', category: 'Artists', symbol: 'JUN', price: 1.96, change: 7.8, marketCap: '196.8K', volume: '15.3K', holders: 604, bio: 'Visual artist exploring memory, code, and movement.', accent: 'pink' },
+]
+const navItems = [{ id: 'marketplace', label: 'Marketplace', icon: LayoutGrid }, { id: 'portfolio', label: 'Portfolio', icon: BarChart3 }, { id: 'create', label: 'Create token', icon: Plus }, { id: 'profile', label: 'Profile', icon: UserRound }]
+const formatCurrency = (value) => `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
 function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+  const [view, setView] = useState('landing')
+  const [consoleView, setConsoleView] = useState('marketplace')
+  const [selectedMarket, setSelectedMarket] = useState(null)
+  const [markets, setMarkets] = useState(fallbackMarkets)
+  const [wallet, setWallet] = useState(() => localStorage.getItem('pulse_wallet') || '')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  useEffect(() => {
+    async function loadMarkets() {
+      try {
+        const response = await fetch(`${API_URL}/v1/markets`)
+        if (!response.ok) return
+        const payload = await response.json()
+        if (payload.markets?.length) setMarkets(payload.markets.map((market, index) => ({ ...fallbackMarkets[index % fallbackMarkets.length], ...market, price: Number(market.current_price || market.price || 0), change: Number(market.change || 0), marketCap: market.marketCap || 'â€”', volume: market.total_volume || 'â€”', holders: market.holder_count || 0 })))
+      } catch { /* Fixtures keep the terminal usable while the API is offline. */ }
+    }
+    if (view === 'console') loadMarkets()
+  }, [view])
+  const enterConsole = () => setView(wallet ? 'console' : 'auth')
+  const openMarket = (market) => { setSelectedMarket(market); setConsoleView('asset') }
+  const handleConnect = (address) => { setWallet(address); localStorage.setItem('pulse_wallet', address); setView('console') }
+  const signOut = () => { localStorage.removeItem('pulse_wallet'); setWallet(''); setView('landing'); setConsoleView('marketplace') }
+  if (view === 'landing') return <Landing onEnter={enterConsole} />
+  if (view === 'auth') return <Auth onConnected={handleConnect} onBack={() => setView('landing')} />
+  const navigate = (next) => { setConsoleView(next); setSelectedMarket(null) }
+  return <div className="app-shell min-h-screen bg-[#08090b] text-white antialiased"><TopBar active={consoleView} onNavigate={navigate} wallet={wallet} onSignOut={signOut} onOpenMobile={() => setMobileNavOpen(true)} /><div className="console-layout"><Sidebar active={consoleView} onChange={navigate} />{mobileNavOpen && <MobileMenu active={consoleView} onChange={(next) => { navigate(next); setMobileNavOpen(false) }} onClose={() => setMobileNavOpen(false)} />}<main className="console-main">{consoleView === 'marketplace' && <Marketplace markets={markets} onOpenMarket={openMarket} />}{consoleView === 'asset' && selectedMarket && <AssetDetail market={selectedMarket} onBack={() => setConsoleView('marketplace')} />}{consoleView === 'portfolio' && <Portfolio markets={markets} onOpenMarket={openMarket} />}{consoleView === 'create' && <CreateToken />}{consoleView === 'profile' && <Profile wallet={wallet} />}</main></div></div>
 }
 
+function Landing({ onEnter }) { return <div className="landing-page"><div className="grid-bg" /><header className="landing-nav"><Brand /><div className="landing-links"><span>Markets</span><span>How it works</span><span>Protocol</span></div><button className="button button-ghost" onClick={onEnter}>Launch console <ArrowUpRight size={15} /></button></header><main className="hero-content"><div className="eyebrow"><span className="live-dot" /> A new market for human potential</div><h1>Trade the <em>signal</em><br />behind the story.</h1><p className="hero-copy">Pulse turns conviction into a living market. Discover people with momentum, back their trajectory, and watch belief compound in real time.</p><div className="hero-actions"><button className="button button-primary" onClick={onEnter}>Enter Pulse <ArrowUpRight size={17} /></button><button className="text-button" onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}>See how it works <ChevronDown size={16} /></button></div><div className="hero-stats"><Stat label="Markets live" value="2,481" /><Stat label="Volume, 24h" value="$1.84M" /><Stat label="Network" value="Hedera" /></div></main><section className="hero-terminal" id="how-it-works"><div className="terminal-head"><span><i /><i /><i /></span><span>pulse / market overview</span><span className="terminal-status">â— live</span></div><div className="terminal-content"><div className="terminal-profile"><div className="avatar avatar-lg">AC</div><div><span className="mini-label">Trending market</span><strong>Alex Chen <small>Â· ALEX</small></strong><span className="terminal-role">Founder / climate systems</span></div></div><div className="terminal-price"><span className="mini-label">Current price</span><strong>$4.82</strong><span className="gain"><ArrowUpRight size={13} /> +18.6%</span></div><Sparkline /></div></section><footer className="landing-footer"><Brand compact /><span>Built for people with somewhere to go.</span><span>Â© 2026 PULSE NETWORK</span></footer></div> }
+
+function Auth({ onConnected, onBack }) { const [connecting, setConnecting] = useState(false); const [error, setError] = useState(''); async function connectWallet() { setError(''); setConnecting(true); try { if (!window.ethereum) throw new Error('MetaMask is not installed in this browser.'); const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }); if (!accounts[0]) throw new Error('No wallet account was selected.'); onConnected(accounts[0]) } catch (connectError) { setError(connectError.message) } finally { setConnecting(false) } } return <div className="auth-page"><div className="grid-bg" /><header className="auth-nav"><Brand /><button className="text-button" onClick={onBack}><X size={16} /> Back to home</button></header><main className="auth-card-wrap"><div className="auth-card"><div className="auth-mark"><Wallet size={20} /></div><span className="eyebrow">Your key to the market</span><h1>Join the signal.</h1><p>Connect your wallet to create your Pulse identity and access live markets.</p><button className="button button-primary full-button" onClick={connectWallet} disabled={connecting}>{connecting ? 'Connecting...' : 'Connect MetaMask'} <ArrowUpRight size={16} /></button>{error && <div className="form-error">{error}</div>}<div className="auth-divider"><span>non-custodial access</span></div><div className="auth-points"><div><ShieldCheck size={16} /><span>Wallet-native identity</span></div><div><Zap size={16} /><span>Sign in in seconds</span></div><div><CircleDollarSign size={16} /><span>Trade with full control</span></div></div></div></main></div> }
+
+function TopBar({ active, onNavigate, wallet, onSignOut, onOpenMobile }) { return <header className="topbar"><Brand /><nav className="floating-nav">{navItems.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => onNavigate(id)} className={active === id ? 'active' : ''}><Icon size={15} />{label}</button>)}</nav><div className="topbar-actions"><button className="icon-button"><Bell size={17} /></button><button className="wallet-chip" onClick={onSignOut}><span className="wallet-dot" />{wallet.slice(0, 6)}...{wallet.slice(-4)}<ChevronDown size={13} /></button><button className="icon-button mobile-menu-trigger" onClick={onOpenMobile}><Menu size={18} /></button></div></header> }
+function Sidebar({ active, onChange }) { return <aside className="sidebar"><span className="side-label">Workspace</span>{navItems.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => onChange(id)} className={active === id ? 'active' : ''}><Icon size={17} /><span>{label}</span>{id === 'create' && <span className="new-badge">new</span>}</button>)}<div className="sidebar-bottom"><span className="side-label">Your account</span><button onClick={() => onChange('profile')} className={active === 'profile' ? 'active' : ''}><Settings2 size={17} /><span>Settings</span></button><div className="network-status"><i /> Hedera testnet <span>â€¢</span></div></div></aside> }
+function MobileMenu({ active, onChange, onClose }) { return <div className="mobile-overlay" onClick={onClose}><div className="mobile-panel" onClick={(event) => event.stopPropagation()}><div className="mobile-panel-head"><Brand /><button className="icon-button" onClick={onClose}><X size={18} /></button></div>{navItems.map(({ id, label, icon: Icon }) => <button key={id} className={active === id ? 'active' : ''} onClick={() => onChange(id)}><Icon size={17} />{label}</button>)}</div></div> }
+
+function Marketplace({ markets, onOpenMarket }) { const [query, setQuery] = useState(''); const visibleMarkets = markets.filter((market) => `${market.name} ${market.symbol} ${market.category}`.toLowerCase().includes(query.toLowerCase())); return <section className="page-section"><div className="page-heading"><div><span className="eyebrow">The marketplace</span><h1>Find your next conviction.</h1><p>Live markets for people building the future.</p></div><button className="button button-light"><Plus size={16} /> Create market</button></div><MarketTicker markets={markets} /><div className="market-toolbar"><div className="tabs"><button className="selected">All markets</button><button>Trending</button><button>Newly listed</button></div><label className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search markets" /></label></div><div className="section-title"><div><h2>Markets in motion <span className="count">{visibleMarkets.length}</span></h2><p>Ranked by momentum over the last 24 hours.</p></div><button className="filter-button"><Settings2 size={15} /> Filters</button></div><div className="market-grid">{visibleMarkets.map((market) => <MarketCard key={market.id} market={market} onClick={() => onOpenMarket(market)} />)}</div></section> }
+function MarketTicker({ markets }) { return <div className="ticker-row"><div className="ticker-intro"><Flame size={16} /><span>Market pulse</span></div>{markets.slice(0, 4).map((market) => <div className="ticker-item" key={market.id}><span>{market.symbol}</span><strong>{formatCurrency(market.price)}</strong><small className={market.change >= 0 ? 'positive' : 'negative'}>{market.change >= 0 ? '+' : ''}{market.change}%</small></div>)}<div className="ticker-end"><TrendingUp size={15} /> Live</div></div> }
+function MarketCard({ market, onClick }) { return <button className="market-card" onClick={onClick}><div className="market-card-top"><div className={`avatar avatar-${market.accent}`}>{market.name.split(' ').map((part) => part[0]).join('')}</div><div className="market-card-name"><strong>{market.name}</strong><span>{market.handle} Â· {market.category}</span></div><span className={market.change >= 0 ? 'change-pill positive-bg' : 'change-pill negative-bg'}>{market.change >= 0 ? '+' : ''}{market.change}%</span></div><div className="market-card-middle"><div><span className="mini-label">Price</span><strong>{formatCurrency(market.price)}</strong></div><Sparkline accent={market.accent} down={market.change < 0} /></div><div className="market-card-footer"><span><small>Market cap</small>{market.marketCap}</span><span><small>24h volume</small>{market.volume}</span><span><small>Holders</small>{market.holders.toLocaleString()}</span><ArrowUpRight size={15} /></div></button> }
+
+function AssetDetail({ market, onBack }) { const [side, setSide] = useState('buy'); const [amount, setAmount] = useState('100'); return <section className="page-section asset-page"><button className="back-link" onClick={onBack}><ArrowDownRight size={15} /> Back to marketplace</button><div className="asset-head"><div className="asset-identity"><div className={`avatar avatar-${market.accent} avatar-xl`}>{market.name.split(' ').map((part) => part[0]).join('')}</div><div><span className="eyebrow">{market.category} market</span><h1>{market.name} <small>{market.symbol}</small></h1><p>{market.bio}</p></div></div><button className="button button-light"><Bell size={15} /> Watch market</button></div><div className="asset-stats"><Stat label="Current price" value={formatCurrency(market.price)} note={`+${market.change}% today`} positive /><Stat label="Market cap" value={`$${market.marketCap}`} note="Fully diluted" /><Stat label="24h volume" value={`$${market.volume}`} note="Across all trades" /><Stat label="Holders" value={market.holders.toLocaleString()} note="Unique wallets" /></div><div className="asset-grid"><div className="chart-panel"><div className="panel-head"><div><h2>Price history</h2><span>Market price in USD</span></div><div className="chart-controls"><button className="selected">Candles</button><button>Line</button><button>1D</button><button>1W</button><button>1M</button></div></div><CandleChart /></div><div className="trade-panel"><div className="trade-tabs"><button className={side === 'buy' ? 'selected' : ''} onClick={() => setSide('buy')}>Buy {market.symbol}</button><button className={side === 'sell' ? 'selected sell-tab' : ''} onClick={() => setSide('sell')}>Sell {market.symbol}</button></div><div className="trade-body"><div className="trade-balance"><span>Available to trade</span><strong>0.00 HBAR</strong></div><label className="input-label">You pay <span>USD</span></label><div className="trade-input"><input value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} /><span>USD</span></div><div className="quick-values"><button onClick={() => setAmount('25')}>$25</button><button onClick={() => setAmount('100')}>$100</button><button onClick={() => setAmount('250')}>$250</button><button onClick={() => setAmount('500')}>$500</button></div><div className="trade-receipt"><div><span>Estimated {side === 'buy' ? 'tokens' : 'return'}</span><strong>{side === 'buy' ? `${(Number(amount || 0) / market.price).toFixed(3)} ${market.symbol}` : formatCurrency(Number(amount || 0))}</strong></div><div><span>Network fee</span><span>~0.001 HBAR</span></div><div><span>Price impact</span><span className="positive">0.08%</span></div></div><button className={`button full-button ${side === 'buy' ? 'button-primary' : 'button-outline'}`}>{side === 'buy' ? 'Connect wallet to buy' : 'Connect wallet to sell'} <ArrowUpRight size={16} /></button><small className="trade-note"><ShieldCheck size={13} /> Non-custodial. You approve every transaction.</small></div></div></div></section> }
+
+function Portfolio({ markets, onOpenMarket }) { return <section className="page-section"><div className="page-heading"><div><span className="eyebrow">Your portfolio</span><h1>Track your conviction.</h1><p>Everything you own, in one clear view.</p></div><button className="button button-light"><Wallet size={16} /> Connect wallet</button></div><div className="portfolio-overview"><div><span className="mini-label">Total portfolio value</span><strong>$0.00</strong><span className="muted">Connect your wallet to see your positions</span></div><div className="portfolio-mini-chart"><Sparkline /></div></div><div className="section-title"><div><h2>Watchlist <span className="count">{markets.length}</span></h2><p>Markets you might want to follow.</p></div></div><div className="watchlist">{markets.slice(0, 3).map((market) => <button className="watch-row" key={market.id} onClick={() => onOpenMarket(market)}><div className={`avatar avatar-${market.accent}`}>{market.symbol.slice(0, 2)}</div><div className="watch-name"><strong>{market.name}</strong><span>{market.symbol} Â· {market.category}</span></div><Sparkline accent={market.accent} down={market.change < 0} /><strong>{formatCurrency(market.price)}</strong><span className={market.change >= 0 ? 'positive' : 'negative'}>{market.change >= 0 ? '+' : ''}{market.change}%</span><ArrowUpRight size={15} /></button>)}</div></section> }
+function CreateToken() { return <section className="page-section narrow-page"><div className="page-heading"><div><span className="eyebrow">Launch a market</span><h1>Put your trajectory on-chain.</h1><p>Create a token that represents your next chapter.</p></div><div className="step-indicator"><span className="active">01</span><i /><span>02</span><i /><span>03</span></div></div><div className="create-layout"><div className="create-form panel"><div className="panel-head"><div><h2>Market details</h2><span>Give people a reason to believe.</span></div><Sparkles size={18} /></div><label className="input-label">Market name<input placeholder="e.g. Alex Chen Potential" /></label><label className="input-label">Ticker symbol<div className="input-with-prefix"><span>$</span><input placeholder="ALEX" maxLength="8" /></div></label><label className="input-label">Your story<textarea placeholder="What are you building? What comes next?" rows="4" /></label><div className="form-row"><label className="input-label">Starting price<div className="input-with-prefix"><span>$</span><input placeholder="0.01" /></div></label><label className="input-label">Supply cap<input placeholder="1,000,000" /></label></div><button className="button button-primary full-button">Review market <ArrowUpRight size={16} /></button></div><div className="preview-panel"><span className="mini-label">Live preview</span><div className="preview-market"><div className="avatar avatar-cyan avatar-lg">AC</div><span className="eyebrow">Builder market</span><h2>Alex Chen <small>$ALEX</small></h2><p>Building the next generation of climate infrastructure.</p><div className="preview-price"><span>$0.01</span><strong>+0.0%</strong></div><Sparkline /></div><div className="preview-note"><ShieldCheck size={16} /><span>Your token is created on Hedera with transparent supply and market rules.</span></div></div></div></section> }
+function Profile({ wallet }) { return <section className="page-section narrow-page"><div className="page-heading"><div><span className="eyebrow">Your identity</span><h1>Make your signal legible.</h1><p>This is how you show up across Pulse.</p></div><button className="button button-light"><Settings2 size={16} /> Settings</button></div><div className="profile-layout"><div className="profile-card panel"><div className="profile-cover" /><div className="profile-card-body"><div className="avatar avatar-xl avatar-cyan profile-avatar">YU</div><span className="verified"><Check size={12} /> Wallet connected</span><h2>Your Pulse profile</h2><p className="muted">Tell the market what you are building and why it matters.</p><label className="input-label">Display name<input placeholder="Your name" /></label><label className="input-label">Username<input placeholder="@yourhandle" /></label><label className="input-label">Bio<textarea rows="3" placeholder="A short signal about your trajectory." /></label><button className="button button-primary">Save profile <Check size={15} /></button></div></div><div className="wallet-panel panel"><div className="panel-head"><div><h2>Wallet</h2><span>Your non-custodial identity</span></div><Wallet size={18} /></div><div className="wallet-address"><span className="wallet-dot" />{wallet}<button className="icon-button"><Copy size={14} /></button></div><div className="wallet-meta"><span>Network</span><strong>Hedera testnet</strong><span>Connection</span><strong className="positive">Active</strong></div></div></div></section> }
+
+function Brand({ compact = false }) { return <div className={`brand ${compact ? 'brand-compact' : ''}`}><span className="brand-mark"><span /><span /><span /></span><strong>PULSE</strong></div> }
+function Stat({ label, value, note, positive }) { return <div className="stat"><span className="mini-label">{label}</span><strong>{value}</strong>{note && <span className={positive ? 'positive' : 'muted'}>{note}</span>}</div> }
+function Sparkline({ accent = 'cyan', down = false }) { const points = down ? '0,14 12,8 24,12 36,7 48,15 60,11 72,17 84,13 96,21 108,18' : '0,22 12,17 24,19 36,11 48,16 60,7 72,12 84,4 96,8 108,1'; return <svg className={`sparkline spark-${accent}`} viewBox="0 0 108 24" preserveAspectRatio="none" aria-label="Price movement chart"><polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.7" vectorEffect="non-scaling-stroke" /></svg> }
+function CandleChart() { const candles = [16, 24, 20, 29, 19, 34, 26, 41, 32, 38, 44, 36, 48, 43, 53, 49, 62, 58, 67, 63, 71, 64, 77, 74]; return <div className="candle-chart"><div className="chart-y-axis"><span>$5.20</span><span>$4.80</span><span>$4.40</span><span>$4.00</span><span>$3.60</span></div><div className="chart-grid"><div className="grid-lines"><i /><i /><i /><i /><i /></div><div className="candles">{candles.map((height, index) => <span className={`candle ${index % 5 === 3 ? 'red' : ''}`} key={index} style={{ '--height': `${height}%`, '--delay': `${index * 0.03}s` }}><i /></span>)}</div><div className="chart-x-axis"><span>09:00</span><span>12:00</span><span>15:00</span><span>18:00</span><span>21:00</span></div></div></div> }
 export default App
