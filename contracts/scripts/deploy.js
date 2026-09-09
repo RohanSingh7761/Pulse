@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import hre from 'hardhat';
 
 const [deployer] = await hre.ethers.getSigners();
@@ -24,5 +24,14 @@ await writeFile(`deployments/${hre.network.name}.json`, JSON.stringify({
   sharedBondingCurve: await protocol.getAddress(),
   marketFactory: await factory.getAddress()
 }, null, 2));
+await appendFile(`deployments/${hre.network.name}.activity.jsonl`, `${JSON.stringify({
+  timestamp: new Date().toISOString(),
+  type: 'contracts.deployed',
+  network: hre.network.name,
+  chainId: (await hre.ethers.provider.getNetwork()).chainId.toString(),
+  deployer: deployer.address,
+  sharedBondingCurve: await protocol.getAddress(),
+  marketFactory: await factory.getAddress()
+})}\n`);
 
 console.log(JSON.stringify({ sharedBondingCurve: await protocol.getAddress(), marketFactory: await factory.getAddress() }));

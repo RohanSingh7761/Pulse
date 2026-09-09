@@ -1,5 +1,8 @@
-import 'dotenv/config';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 import { z } from 'zod';
+
+dotenv.config({ path: fileURLToPath(new URL('../../.env', import.meta.url)) });
 
 const optionalString = z.string().trim().min(1).optional();
 
@@ -15,6 +18,7 @@ const envSchema = z.object({
   PGUSER: z.string().default('postgres'),
   PGPASSWORD: z.string().default('postgres'),
   HEDERA_NETWORK: z.enum(['testnet', 'mainnet', 'previewnet', 'local']).default('testnet'),
+  HEDERA_RPC_URL: z.string().url().default('https://testnet.hashio.io/api'),
   HEDERA_OPERATOR_ID: optionalString,
   HEDERA_OPERATOR_KEY: optionalString,
   HEDERA_TOKEN_DECIMALS: z.coerce.number().int().min(0).max(18).default(8),
