@@ -5,7 +5,7 @@ import { Interface, parseUnits } from 'ethers';
 import { pool } from '../db/pool.js';
 import { requireAuth } from '../middleware/auth.js';
 import { quoteBuy, quoteSell } from '../services/bondingCurve.service.js';
-import { createMarketToken, registerMarketOnChain } from '../services/hedera.service.js';
+import { registerMarketOnChain } from '../services/hedera.service.js';
 import { logActivity } from '../services/activityLog.service.js';
 
 const marketInput = z.object({
@@ -45,9 +45,9 @@ marketRouter.post('/', requireAuth, async (request, response, next) => {
     await database.query(`INSERT INTO bonding_curves (market_id, curve_type, base_price, slope, max_supply)
       VALUES ($1, $2, $3, $4, $5)`, [marketId, input.curveType, input.basePrice, input.slope, input.maxSupply]);
     await database.query('COMMIT');
-    token = await createMarketToken({ name: input.name, symbol: input.symbol, maxSupply: input.maxSupply });
+    const chainMarket = await registerMarketOnChain({ ...input, decimals: Number(process.env.HEDERA_TOKEN_DECIMALS || 8) });
+    token = { tokenId: chainMarket.tokenId, decimals: chainMarket.decimals, transactionId: chainMarket.transactionId, network: process.env.HEDERA_NETWORK || 'testnet' };
     await database.query(`UPDATE person_markets SET token_id = $1, creation_transaction_id = $2, token_decimals = $3, creation_status = 'confirmed' WHERE id = $4`, [token.tokenId, token.transactionId, token.decimals, marketId]);
-    const chainMarket = await registerMarketOnChain({ tokenId: token.tokenId, ...input, decimals: token.decimals });
     const updated = await database.query(`UPDATE person_markets SET status = 'active', creation_status = 'confirmed', token_id = $1,
       creation_transaction_id = $2, token_decimals = $3, contract_address = $4, contract_market_id = $5 WHERE id = $6 RETURNING *`, [token.tokenId, token.transactionId, token.decimals, chainMarket.contractAddress, chainMarket.contractMarketId, marketId]);
     await logActivity('market.created', { userId: request.user.sub, marketId, tokenId: token.tokenId, tokenTransactionId: token.transactionId, contractAddress: chainMarket.contractAddress, contractMarketId: chainMarket.contractMarketId, contractTransactionId: chainMarket.transactionId });

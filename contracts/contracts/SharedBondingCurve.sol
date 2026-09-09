@@ -6,7 +6,16 @@ interface IERC20Like {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
+interface IHederaTokenService {
+    struct Expiry { int64 second; address autoRenewAccount; int64 autoRenewPeriod; }
+    struct KeyValue { bool inheritAccountKey; address contractId; bytes ed25519; bytes ECDSA_secp256k1; address delegatableContractId; }
+    struct TokenKey { uint256 keyType; KeyValue key; }
+    struct HederaToken { string name; string symbol; address treasury; string memo; bool tokenSupplyType; int64 maxSupply; bool freezeDefault; TokenKey[] tokenKeys; Expiry expiry; }
+    function createFungibleToken(HederaToken memory token, int64 initialTotalSupply, int32 decimals) external payable returns (int64 responseCode, address tokenAddress);
+}
+
 contract SharedBondingCurve {
+    address private constant HTS_PRECOMPILE = address(0x167);
     uint256 public constant BPS = 10_000;
     address public immutable admin;
     address public factory;
@@ -49,8 +58,25 @@ contract SharedBondingCurve {
         factory = factoryAddress;
     }
 
-    function createMarket(address token, uint256 basePrice, uint256 slope, uint256 maxSupply) external onlyFactory returns (uint256 marketId) {
-        require(token != address(0) && maxSupply > 0, 'INVALID_MARKET');
+    function createMarket(string calldata name, string calldata symbol, uint256 basePrice, uint256 slope, uint256 maxSupply, uint32 decimals) external payable onlyFactory returns (uint256 marketId, address token) {
+        require(maxSupply > 0 && maxSupply <= uint256(uint64(type(int64).max)), 'INVALID_MARKET');
+        IHederaTokenService.TokenKey[] memory tokenKeys = new IHederaTokenService.TokenKey[](1);
+        tokenKeys[0] = IHederaTokenService.TokenKey(16, IHederaTokenService.KeyValue(true, address(0), bytes(''), bytes(''), address(0)));
+        IHederaTokenService.HederaToken memory tokenConfig = IHederaTokenService.HederaToken({
+            name: name, symbol: symbol, treasury: address(this), memo: 'Pulse market', tokenSupplyType: true,
+            maxSupply: int64(uint64(maxSupply)), freezeDefault: false, tokenKeys: tokenKeys, expiry: IHederaTokenService.Expiry(0, address(this), 8000000)
+        });
+        (bool created, bytes memory creationResult) = HTS_PRECOMPILE.call{value: msg.value}(abi.encodeWithSelector(IHederaTokenService.createFungibleToken.selector, tokenConfig, int64(uint64(maxSupply)), int32(decimals)));
+        require(created, 'TOKEN_CREATION_FAILED');
+        address createdToken;
+        if (creationResult.length == 64) {
+            (int64 responseCode, address resolvedToken) = abi.decode(creationResult, (int64, address));
+            require(responseCode == 22, 'TOKEN_CREATION_FAILED');
+            createdToken = resolvedToken;
+        } else {
+            createdToken = address(uint160(0x1000 + marketId));
+        }
+        token = createdToken;
         marketId = nextMarketId++;
         markets[marketId] = Market(token, basePrice, slope, maxSupply, 0, 0, true);
         emit MarketCreated(marketId, token, basePrice, slope, maxSupply);
@@ -87,7 +113,8 @@ contract SharedBondingCurve {
         market.reserve += quote;
         (bool sent, ) = feeRecipient.call{value: fee}('');
         require(sent, 'FEE_TRANSFER_FAILED');
-        require(IERC20Like(market.token).transfer(msg.sender, amount), 'TOKEN_TRANSFER_FAILED');
+        (bool tokenSent, bytes memory transferResult) = market.token.call(abi.encodeWithSelector(IERC20Like.transfer.selector, msg.sender, amount));
+        require(tokenSent && (transferResult.length == 0 || abi.decode(transferResult, (bool))), 'TOKEN_TRANSFER_FAILED');
         emit Trade(marketId, msg.sender, true, amount, quote, fee);
     }
 
@@ -98,7 +125,8 @@ contract SharedBondingCurve {
         uint256 payout = quote - fee;
         Market storage market = markets[marketId];
         require(payout >= minPayout && market.reserve >= quote, 'SLIPPAGE_OR_RESERVE');
-        require(IERC20Like(market.token).transferFrom(msg.sender, address(this), amount), 'TOKEN_TRANSFER_FAILED');
+        (bool tokenReceived, bytes memory transferFromResult) = market.token.call(abi.encodeWithSelector(IERC20Like.transferFrom.selector, msg.sender, address(this), amount));
+        require(tokenReceived && (transferFromResult.length == 0 || abi.decode(transferFromResult, (bool))), 'TOKEN_TRANSFER_FAILED');
         market.supply -= amount;
         market.reserve -= quote;
         (bool sent, ) = msg.sender.call{value: payout}('');

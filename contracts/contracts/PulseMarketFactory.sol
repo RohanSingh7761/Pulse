@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 interface ISharedBondingCurve {
-    function createMarket(address token, uint256 basePrice, uint256 slope, uint256 maxSupply) external returns (uint256);
+    function createMarket(string calldata name, string calldata symbol, uint256 basePrice, uint256 slope, uint256 maxSupply, uint32 decimals) external payable returns (uint256, address);
     function setFactory(address factoryAddress) external;
 }
 
@@ -20,8 +20,9 @@ contract PulseMarketFactory {
         protocol = ISharedBondingCurve(protocolAddress);
     }
 
-    function createMarket(address token, uint256 basePrice, uint256 slope, uint256 maxSupply) external onlyOwner returns (uint256 marketId) {
-        marketId = protocol.createMarket(token, basePrice, slope, maxSupply);
+    function createMarket(string calldata name, string calldata symbol, uint256 basePrice, uint256 slope, uint256 maxSupply, uint32 decimals) external payable onlyOwner returns (uint256 marketId) {
+        address token;
+        (marketId, token) = protocol.createMarket{value: msg.value}(name, symbol, basePrice, slope, maxSupply, decimals);
         emit MarketRegistered(marketId, msg.sender, token);
     }
 }

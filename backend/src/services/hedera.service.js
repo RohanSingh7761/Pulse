@@ -1,14 +1,10 @@
 import {
   Client,
-  ContractId,
   PrivateKey,
-  TokenId,
-  TokenAssociateTransaction,
   TokenCreateTransaction,
-  TokenType,
-  TransferTransaction
+  TokenType
 } from '@hashgraph/sdk';
-import { Contract, JsonRpcProvider, Wallet, parseUnits } from 'ethers';
+import { Contract, Interface, JsonRpcProvider, Wallet, parseUnits } from 'ethers';
 import { env } from '../config/env.js';
 
 function getOperatorKey() {
@@ -30,7 +26,8 @@ export function hederaStatus() {
   return {
     network: env.HEDERA_NETWORK,
     configured: Boolean(env.HEDERA_OPERATOR_ID && env.HEDERA_OPERATOR_KEY),
-    factoryConfigured: Boolean(env.PULSE_MARKET_FACTORY_ADDRESS)
+    factoryConfigured: Boolean(env.PULSE_MARKET_FACTORY_ADDRESS),
+    tokenCreationFeeHbar: env.HEDERA_TOKEN_CREATION_FEE_HBAR
   };
 }
 
@@ -61,46 +58,76 @@ export async function createMarketToken({ name, symbol, maxSupply, decimals = en
   }
 }
 
-async function associateAndFundProtocol(tokenId, amount, decimals) {
-  if (!env.PULSE_BONDING_CURVE_ADDRESS) throw new Error('Bonding curve contract address is not configured');
-  const client = getClient();
-  const protocol = ContractId.fromEvmAddress(0, 0, env.PULSE_BONDING_CURVE_ADDRESS);
-  try {
-    const association = await new TokenAssociateTransaction()
-      .setAccountId(protocol)
-      .setTokenIds([TokenId.fromString(tokenId)])
-      .execute(client);
-    await association.getReceipt(client);
-    const transfer = await new TransferTransaction()
-      .addTokenTransferWithDecimals(TokenId.fromString(tokenId), env.HEDERA_OPERATOR_ID, -BigInt(amount), decimals)
-      .addTokenTransferWithDecimals(TokenId.fromString(tokenId), protocol, BigInt(amount), decimals)
-      .execute(client);
-    await transfer.getReceipt(client);
-    return { associationTransactionId: association.transactionId.toString(), fundingTransactionId: transfer.transactionId.toString() };
-  } finally { client.close(); }
-}
-
 const factoryAbi = [
-  'function createMarket(address token, uint256 basePrice, uint256 slope, uint256 maxSupply) external returns (uint256)',
+  'function createMarket(string name,string symbol,uint256 basePrice,uint256 slope,uint256 maxSupply,uint32 decimals) external payable returns (uint256 marketId)',
   'event MarketRegistered(uint256 indexed marketId, address indexed creator, address token)'
 ];
 
-export async function registerMarketOnChain({ tokenId, basePrice, slope, maxSupply, decimals = env.HEDERA_TOKEN_DECIMALS }) {
+const protocolAbi = [
+  'event MarketCreated(uint256 indexed marketId, address indexed token, uint256 basePrice, uint256 slope, uint256 maxSupply)'
+];
+
+function evmAddressToHederaTokenId(address) {
+  const hex = String(address).toLowerCase().replace(/^0x/, '').padStart(40, '0');
+  if (!/^[0-9a-f]{40}$/.test(hex)) throw new Error(`Invalid HTS token address: ${address}`);
+  const shard = BigInt(`0x${hex.slice(0, 8)}`);
+  const realm = BigInt(`0x${hex.slice(8, 24)}`);
+  const num = BigInt(`0x${hex.slice(24)}`);
+  return `${shard}.${realm}.${num}`;
+}
+
+function parseCreatedMarket(receipt) {
+  const factoryInterface = new Interface(factoryAbi);
+  const protocolInterface = new Interface(protocolAbi);
+  for (const log of receipt.logs || []) {
+    try {
+      const parsed = factoryInterface.parseLog({ topics: [...log.topics], data: log.data });
+      if (parsed?.name === 'MarketRegistered' && parsed.args.token && parsed.args.token !== '0x0000000000000000000000000000000000000000') {
+        return { marketId: parsed.args.marketId.toString(), tokenAddress: parsed.args.token };
+      }
+    } catch { /* not a factory event */ }
+    try {
+      const parsed = protocolInterface.parseLog({ topics: [...log.topics], data: log.data });
+      if (parsed?.name === 'MarketCreated' && parsed.args.token) {
+        return { marketId: parsed.args.marketId.toString(), tokenAddress: parsed.args.token };
+      }
+    } catch { /* not a protocol event */ }
+  }
+  return { marketId: null, tokenAddress: null };
+}
+
+async function resolveCreatedToken(tokenAddress, decimals) {
+  const tokenId = evmAddressToHederaTokenId(tokenAddress);
+  const delaysMs = [0, 1500, 3000, 5000];
+  for (const delayMs of delaysMs) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const tokenResponse = await fetch(`${env.HEDERA_MIRROR_NODE_URL}/api/v1/tokens/${tokenId}`);
+    if (tokenResponse.ok) {
+      const token = await tokenResponse.json();
+      return { tokenId: token.token_id || tokenId, decimals: Number(token.decimals ?? decimals) };
+    }
+    if (tokenResponse.status !== 404) continue;
+  }
+  return { tokenId, decimals };
+}
+
+export async function registerMarketOnChain({ name, symbol, basePrice, slope, maxSupply, decimals = env.HEDERA_TOKEN_DECIMALS }) {
   if (!env.PULSE_MARKET_FACTORY_ADDRESS || !env.HEDERA_OPERATOR_KEY) throw new Error('Hedera factory and operator credentials are required');
   const provider = new JsonRpcProvider(env.HEDERA_RPC_URL);
   const signer = new Wallet(env.HEDERA_OPERATOR_KEY, provider);
   const factory = new Contract(env.PULSE_MARKET_FACTORY_ADDRESS, factoryAbi, signer);
-  const tokenAddress = `0x${TokenId.fromString(tokenId).toSolidityAddress()}`;
   const transaction = await factory.createMarket(
-    tokenAddress,
+    name,
+    symbol,
     parseUnits(basePrice, decimals),
     parseUnits(slope, decimals),
-    parseUnits(maxSupply, decimals)
+    parseUnits(maxSupply, decimals),
+    decimals,
+    { value: parseUnits(env.HEDERA_TOKEN_CREATION_FEE_HBAR, 8) * 10n ** 10n }
   );
   const receipt = await transaction.wait();
-  const marketCreatedTopic = factory.interface.getEvent('MarketRegistered').topicHash;
-  const event = receipt.logs.find((log) => log.topics?.[0] === marketCreatedTopic);
-  const marketId = event ? BigInt(event.topics[1]).toString() : null;
-  const funding = await associateAndFundProtocol(tokenId, maxSupply, decimals);
-  return { contractAddress: env.PULSE_BONDING_CURVE_ADDRESS, factoryAddress: env.PULSE_MARKET_FACTORY_ADDRESS, contractMarketId: marketId, transactionId: transaction.hash, ...funding };
+  const { marketId, tokenAddress } = parseCreatedMarket(receipt);
+  if (!tokenAddress) throw new Error('Market registration did not emit an HTS token address');
+  const token = await resolveCreatedToken(tokenAddress, decimals);
+  return { contractAddress: env.PULSE_BONDING_CURVE_ADDRESS, factoryAddress: env.PULSE_MARKET_FACTORY_ADDRESS, contractMarketId: marketId, transactionId: transaction.hash, tokenId: token.tokenId, tokenAddress, decimals: token.decimals };
 }

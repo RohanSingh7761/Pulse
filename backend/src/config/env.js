@@ -19,6 +19,8 @@ const envSchema = z.object({
   PGPASSWORD: z.string().default('postgres'),
   HEDERA_NETWORK: z.enum(['testnet', 'mainnet', 'previewnet', 'local']).default('testnet'),
   HEDERA_RPC_URL: z.string().url().default('https://testnet.hashio.io/api'),
+  HEDERA_MIRROR_NODE_URL: z.string().url().default('https://testnet.mirrornode.hedera.com'),
+  HEDERA_TOKEN_CREATION_FEE_HBAR: z.string().regex(/^\d+(\.\d+)?$/).default('1'),
   HEDERA_OPERATOR_ID: optionalString,
   HEDERA_OPERATOR_KEY: optionalString,
   HEDERA_TOKEN_DECIMALS: z.coerce.number().int().min(0).max(18).default(8),
