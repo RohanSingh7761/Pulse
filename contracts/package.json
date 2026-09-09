@@ -12,5 +12,8 @@
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
     "dotenv": "^17.4.2",
     "hardhat": "^2.26.3"
+  },
+  "dependencies": {
+    "pulse": "file:.."
   }
 }

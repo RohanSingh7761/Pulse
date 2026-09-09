@@ -18,7 +18,6 @@ contract PulseMarketFactory {
         require(protocolAddress != address(0), 'INVALID_PROTOCOL');
         owner = msg.sender;
         protocol = ISharedBondingCurve(protocolAddress);
-        protocol.setFactory(address(this));
     }
 
     function createMarket(address token, uint256 basePrice, uint256 slope, uint256 maxSupply) external onlyOwner returns (uint256 marketId) {

@@ -13,6 +13,9 @@ const marketFactory = await hre.ethers.getContractFactory('PulseMarketFactory');
 const factory = await marketFactory.deploy(await protocol.getAddress());
 await factory.waitForDeployment();
 
+const factoryAuthorization = await protocol.setFactory(await factory.getAddress());
+await factoryAuthorization.wait();
+
 await mkdir('deployments', { recursive: true });
 await writeFile(`deployments/${hre.network.name}.json`, JSON.stringify({
   network: hre.network.name,
