@@ -5,7 +5,7 @@ import { Interface, parseUnits } from 'ethers';
 import { pool } from '../db/pool.js';
 import { requireAuth } from '../middleware/auth.js';
 import { quoteBuy, quoteSell } from '../services/bondingCurve.service.js';
-import { registerMarketOnChain } from '../services/hedera.service.js';
+import { quoteTradeOnChain, registerMarketOnChain } from '../services/hedera.service.js';
 import { logActivity } from '../services/activityLog.service.js';
 
 const marketInput = z.object({
@@ -111,23 +111,28 @@ marketRouter.post('/:id/trades/prepare', requireAuth, async (request, response, 
   try {
     const market = await getMarket(request, response); if (!market) return;
     const { tradeType, tokenAmount, maxSlippageBps } = parsed.data;
+    if (!market.contract_address || market.contract_market_id === null) {
+      throw new Error('This market is not registered with the bonding-curve contract.')
+    }
     const quote = tradeType === 'buy' ? quoteBuy(curveInput(market, tokenAmount)) : quoteSell(curveInput(market, tokenAmount));
+    const deadline = Math.floor(Date.now() / 1000) + Number(process.env.TRANSACTION_DEADLINE_SECONDS || 300);
+    const decimals = Number(market.token_decimals || 8);
+    const amountUnits = parseUnits(String(tokenAmount), decimals).toString();
+    // A trade must use the contract's current quote. Falling back to the database
+    // can encode an old supply and guarantees a revert when the curve has moved.
+    const onChain = await quoteTradeOnChain({ marketId: market.contract_market_id, amountUnits, tradeType });
+    const totalTinybar = onChain.totalTinybar;
+    const maxCostUnits = tradeType === 'buy'
+      ? (BigInt(totalTinybar) * BigInt(10000 + maxSlippageBps) / 10000n).toString()
+      : (BigInt(totalTinybar) * BigInt(10000 - maxSlippageBps) / 10000n).toString();
+    const functionName = tradeType === 'buy' ? 'buy(uint256,uint256,uint256,uint256)' : 'sell(uint256,uint256,uint256,uint256)';
+    const args = [market.contract_market_id, amountUnits, maxCostUnits, deadline];
+    const data = new Interface([`function ${functionName}`]).encodeFunctionData(functionName, args);
     const idempotencyKey = crypto.randomUUID();
     const trade = await pool.query(`INSERT INTO trades (user_id, market_id, trade_type, token_amount, settlement_amount, execution_price, idempotency_key)
       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, idempotency_key, status`, [request.user.sub, market.id, tradeType, tokenAmount, quote.settlementAmount, quote.priceAfter, idempotencyKey]);
-    const deadline = Math.floor(Date.now() / 1000) + Number(process.env.TRANSACTION_DEADLINE_SECONDS || 300);
-    const decimals = Number(market.token_decimals || 8);
-    const toUnits = (value) => parseUnits(String(value), decimals).toString();
-    const amountUnits = toUnits(tokenAmount);
-    const quoteUnits = toUnits(quote.settlementAmount);
-    const maxCostUnits = (BigInt(quoteUnits) * BigInt(10000 + maxSlippageBps) / 10000n).toString();
-    const feeUnits = BigInt(quoteUnits) * BigInt(process.env.DEFAULT_PROTOCOL_FEE_BPS || 100) / 10000n;
-    const exactBuyValue = (BigInt(quoteUnits) + feeUnits).toString();
-    const functionName = tradeType === 'buy' ? 'buy(uint256,uint256,uint256,uint256)' : 'sell(uint256,uint256,uint256,uint256)';
-    const args = [market.contract_market_id, amountUnits, tradeType === 'buy' ? maxCostUnits : (BigInt(quoteUnits) * BigInt(10000 - maxSlippageBps) / 10000n).toString(), deadline];
-    const data = new Interface([`function ${functionName}`]).encodeFunctionData(functionName, args);
     await logActivity('trade.prepared', { userId: request.user.sub, marketId: market.id, tradeId: trade.rows[0].id, tradeType, tokenAmount, settlementAmount: quote.settlementAmount, contractAddress: market.contract_address, contractMarketId: market.contract_market_id, deadline });
-    response.status(201).json({ trade: trade.rows[0], market: { tokenId: market.token_id, tokenDecimals: decimals, contractAddress: market.contract_address, contractMarketId: market.contract_market_id }, quote, maxSlippageBps, deadline, transaction: { to: market.contract_address, data, value: tradeType === 'buy' ? `0x${BigInt(exactBuyValue).toString(16)}` : '0x0' }, execution: 'wallet_signature_required' });
+    response.status(201).json({ trade: trade.rows[0], market: { tokenId: market.token_id, tokenDecimals: decimals, contractAddress: market.contract_address, contractMarketId: market.contract_market_id }, quote, maxSlippageBps, deadline, transaction: { to: market.contract_address, data, value: tradeType === 'buy' ? `0x${BigInt(onChain.transactionValueWei).toString(16)}` : '0x0', gas: '0x2DC6C0' }, execution: 'wallet_signature_required' });
   } catch (error) { next(error); }
 });
 
@@ -137,11 +142,100 @@ marketRouter.post('/:id/trades/:tradeId/confirm', requireAuth, async (request, r
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const trade = await client.query(`UPDATE trades SET status = $1, transaction_id = $2, confirmed_at = CASE WHEN $1 = 'confirmed' THEN now() ELSE NULL END
-      WHERE id = $3 AND user_id = $4 RETURNING *`, [input.data.status, input.data.transactionId, request.params.tradeId, request.user.sub]);
-    if (!trade.rows[0]) { await client.query('ROLLBACK'); return response.status(404).json({ error: 'trade_not_found' }); }
+
+    // 1. Mark the trade as confirmed/failed
+    const tradeResult = await client.query(
+      `UPDATE trades SET status = $1::varchar, transaction_id = $2,
+        confirmed_at = CASE WHEN $1::varchar = 'confirmed'::varchar THEN now() ELSE NULL END
+       WHERE id = $3 AND user_id = $4 RETURNING *`,
+      [input.data.status, input.data.transactionId, request.params.tradeId, request.user.sub]
+    );
+    if (!tradeResult.rows[0]) { await client.query('ROLLBACK'); return response.status(404).json({ error: 'trade_not_found' }); }
+    const trade = tradeResult.rows[0];
+
+    // 2. Only update derived state for confirmed trades
+    if (input.data.status === 'confirmed') {
+      // Fetch current market state + bonding curve params
+      const marketResult = await client.query(
+        `SELECT m.circulating_supply, m.reserve_balance, m.total_volume,
+                c.base_price, c.slope
+         FROM person_markets m
+         JOIN bonding_curves c ON c.market_id = m.id
+         WHERE m.id = $1`,
+        [trade.market_id]
+      );
+      if (marketResult.rows[0]) {
+        const mkt = marketResult.rows[0];
+        const tokenAmt  = Number(trade.token_amount);
+        const settleAmt = Number(trade.settlement_amount);
+        const isBuy     = trade.trade_type === 'buy';
+
+        const newSupply  = isBuy
+          ? Number(mkt.circulating_supply) + tokenAmt
+          : Math.max(0, Number(mkt.circulating_supply) - tokenAmt);
+        const newReserve = isBuy
+          ? Number(mkt.reserve_balance) + settleAmt
+          : Math.max(0, Number(mkt.reserve_balance) - settleAmt);
+        const newPrice   = Number(mkt.base_price) + Number(mkt.slope) * newSupply;
+        const newVolume  = Number(mkt.total_volume) + settleAmt;
+
+        // 3. Update person_markets
+        await client.query(
+          `UPDATE person_markets
+           SET current_price       = $1,
+               circulating_supply  = $2,
+               reserve_balance     = $3,
+               total_volume        = $4
+           WHERE id = $5`,
+          [newPrice, newSupply, newReserve, newVolume, trade.market_id]
+        );
+
+        // 4. Upsert holdings for the trader
+        if (isBuy) {
+          await client.query(
+            `INSERT INTO holdings (user_id, market_id, token_balance, average_entry_price, total_invested)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (user_id, market_id) DO UPDATE
+               SET token_balance       = holdings.token_balance + EXCLUDED.token_balance,
+                   total_invested      = holdings.total_invested + EXCLUDED.total_invested,
+                   average_entry_price = (holdings.total_invested + EXCLUDED.total_invested)
+                                         / NULLIF(holdings.token_balance + EXCLUDED.token_balance, 0),
+                   updated_at          = now()`,
+            [trade.user_id, trade.market_id, tokenAmt, newPrice, settleAmt]
+          );
+        } else {
+          // On sell: reduce balance; keep avg_entry_price unchanged (standard convention)
+          await client.query(
+            `UPDATE holdings
+             SET token_balance  = GREATEST(0, token_balance - $1),
+                 total_invested = GREATEST(0, total_invested - $2),
+                 updated_at     = now()
+             WHERE user_id = $3 AND market_id = $4`,
+            [tokenAmt, settleAmt, trade.user_id, trade.market_id]
+          );
+        }
+
+        // 5. Recount holder_count (anyone with balance > 0)
+        const holderCountResult = await client.query(
+          `SELECT COUNT(*) AS cnt FROM holdings WHERE market_id = $1 AND token_balance > 0`,
+          [trade.market_id]
+        );
+        await client.query(
+          `UPDATE person_markets SET holder_count = $1 WHERE id = $2`,
+          [Number(holderCountResult.rows[0].cnt), trade.market_id]
+        );
+
+        // 6. Record a price tick for the chart
+        await client.query(
+          `INSERT INTO price_ticks (market_id, price, supply, reserve_balance)
+           VALUES ($1, $2, $3, $4)`,
+          [trade.market_id, newPrice, newSupply, newReserve]
+        );
+      }
+    }
+
     await client.query('COMMIT');
     await logActivity(`trade.${input.data.status}`, { userId: request.user.sub, tradeId: request.params.tradeId, transactionId: input.data.transactionId });
-    response.json({ trade: trade.rows[0] });
+    response.json({ trade });
   } catch (error) { await client.query('ROLLBACK'); next(error); } finally { client.release(); }
 });

@@ -31,6 +31,7 @@ contract SharedBondingCurve {
         uint256 supply;
         uint256 reserve;
         bool active;
+        uint32 decimals;
     }
 
     mapping(uint256 => Market) public markets;
@@ -74,32 +75,43 @@ contract SharedBondingCurve {
             require(responseCode == 22, 'TOKEN_CREATION_FAILED');
             createdToken = resolvedToken;
         } else {
-            createdToken = address(uint160(0x1000 + marketId));
+            createdToken = address(uint160(0x1000 + nextMarketId));
         }
         token = createdToken;
         marketId = nextMarketId++;
-        markets[marketId] = Market(token, basePrice, slope, maxSupply, 0, 0, true);
+        markets[marketId] = Market({ token: token, basePrice: basePrice, slope: slope, maxSupply: maxSupply, supply: 0, reserve: 0, active: true, decimals: decimals });
         emit MarketCreated(marketId, token, basePrice, slope, maxSupply);
+    }
+
+    function tokenScale(uint32 decimals) private pure returns (uint256) {
+        return 10 ** uint256(decimals);
+    }
+
+    function settlementAssetDecimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function integralCost(uint256 basePrice, uint256 slope, uint256 start, uint256 amount, uint256 scale) private pure returns (uint256) {
+        uint256 end = start + amount;
+        return ((basePrice * amount) / scale) + ((slope * ((end * end) - (start * start))) / (2 * scale * scale));
     }
 
     function getCurrentPrice(uint256 marketId) public view returns (uint256) {
         Market memory market = markets[marketId];
         require(market.active, 'MARKET_INACTIVE');
-        return market.basePrice + (market.slope * market.supply);
+        return market.basePrice + ((market.slope * market.supply) / tokenScale(market.decimals));
     }
 
     function getBuyQuote(uint256 marketId, uint256 amount) public view returns (uint256) {
         Market memory market = markets[marketId];
         require(market.active && amount > 0 && market.supply + amount <= market.maxSupply, 'INVALID_BUY');
-        uint256 endSupply = market.supply + amount;
-        return (market.basePrice * amount) + ((market.slope * ((endSupply * endSupply) - (market.supply * market.supply))) / 2);
+        return integralCost(market.basePrice, market.slope, market.supply, amount, tokenScale(market.decimals));
     }
 
     function getSellQuote(uint256 marketId, uint256 amount) public view returns (uint256) {
         Market memory market = markets[marketId];
         require(market.active && amount > 0 && amount <= market.supply, 'INVALID_SELL');
-        uint256 remaining = market.supply - amount;
-        return (market.basePrice * amount) + ((market.slope * ((market.supply * market.supply) - (remaining * remaining))) / 2);
+        return integralCost(market.basePrice, market.slope, market.supply - amount, amount, tokenScale(market.decimals));
     }
 
     function buy(uint256 marketId, uint256 amount, uint256 maxCost, uint256 deadline) external payable nonReentrant {
@@ -107,7 +119,10 @@ contract SharedBondingCurve {
         uint256 quote = getBuyQuote(marketId, amount);
         uint256 fee = (quote * protocolFeeBps) / BPS;
         uint256 total = quote + fee;
-        require(total <= maxCost && msg.value == total, 'SLIPPAGE_OR_VALUE');
+        // Hedera exposes msg.value to Solidity in tinybars, even though an
+        // Ethereum JSON-RPC transaction's value is supplied in weibars.
+        // Curve prices and maxCost are therefore intentionally tinybar values.
+        require(msg.value == total && total <= maxCost, 'SLIPPAGE_OR_VALUE');
         Market storage market = markets[marketId];
         market.supply += amount;
         market.reserve += quote;

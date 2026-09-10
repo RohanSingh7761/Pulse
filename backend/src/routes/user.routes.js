@@ -42,3 +42,20 @@ userRouter.patch('/me', async (request, response, next) => {
     response.json({ user: user.rows[0] });
   } catch (error) { await client.query('ROLLBACK'); next(error); } finally { client.release(); }
 });
+
+userRouter.get('/me/holdings', async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT h.token_balance, h.average_entry_price, h.total_invested,
+              m.id, m.name, m.symbol, m.current_price, m.circulating_supply,
+              m.reserve_balance, m.holder_count, m.total_volume, m.token_id,
+              m.contract_address, m.status
+       FROM holdings h
+       JOIN person_markets m ON m.id = h.market_id
+       WHERE h.user_id = $1 AND h.token_balance > 0
+       ORDER BY h.updated_at DESC`,
+      [request.user.sub]
+    );
+    response.json({ holdings: result.rows });
+  } catch (error) { next(error); }
+});

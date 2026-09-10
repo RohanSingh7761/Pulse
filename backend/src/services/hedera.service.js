@@ -4,7 +4,7 @@ import {
   TokenCreateTransaction,
   TokenType
 } from '@hashgraph/sdk';
-import { Contract, Interface, JsonRpcProvider, Wallet, parseUnits } from 'ethers';
+import { Contract, Interface, JsonRpcProvider, Wallet, formatUnits, parseUnits } from 'ethers';
 import { env } from '../config/env.js';
 
 function getOperatorKey() {
@@ -119,8 +119,9 @@ export async function registerMarketOnChain({ name, symbol, basePrice, slope, ma
   const transaction = await factory.createMarket(
     name,
     symbol,
-    parseUnits(basePrice, decimals),
-    parseUnits(slope, decimals),
+    // Hedera Solidity exposes HBAR values as tinybars (8 decimals).
+    parseUnits(basePrice, 8),
+    parseUnits(slope, 8),
     parseUnits(maxSupply, decimals),
     decimals,
     { value: parseUnits(env.HEDERA_TOKEN_CREATION_FEE_HBAR, 8) * 10n ** 10n }
@@ -130,4 +131,60 @@ export async function registerMarketOnChain({ name, symbol, basePrice, slope, ma
   if (!tokenAddress) throw new Error('Market registration did not emit an HTS token address');
   const token = await resolveCreatedToken(tokenAddress, decimals);
   return { contractAddress: env.PULSE_BONDING_CURVE_ADDRESS, factoryAddress: env.PULSE_MARKET_FACTORY_ADDRESS, contractMarketId: marketId, transactionId: transaction.hash, tokenId: token.tokenId, tokenAddress, decimals: token.decimals };
+}
+
+const protocolQuoteAbi = [
+  'function getBuyQuote(uint256 marketId,uint256 amount) view returns (uint256)',
+  'function getSellQuote(uint256 marketId,uint256 amount) view returns (uint256)',
+  'function protocolFeeBps() view returns (uint256)',
+  'function settlementAssetDecimals() view returns (uint8)',
+  'function getCurrentPrice(uint256 marketId) view returns (uint256)',
+  'function markets(uint256 marketId) view returns (address token,uint256 basePrice,uint256 slope,uint256 maxSupply,uint256 supply,uint256 reserve,bool active,uint32 decimals)'
+];
+
+const WEIBARS_PER_TINYBAR = 10n ** 10n;
+
+export function tinybarToWei(tinybars) {
+  return BigInt(tinybars) * WEIBARS_PER_TINYBAR;
+}
+
+export async function quoteTradeOnChain({ marketId, amountUnits, tradeType }) {
+  if (!env.PULSE_BONDING_CURVE_ADDRESS) throw new Error('Bonding curve address is not configured');
+  const provider = new JsonRpcProvider(env.HEDERA_RPC_URL);
+  const protocol = new Contract(env.PULSE_BONDING_CURVE_ADDRESS, protocolQuoteAbi, provider);
+  let settlementAssetDecimals;
+  try {
+    settlementAssetDecimals = await protocol.settlementAssetDecimals();
+  } catch {
+    throw new Error('The deployed bonding-curve contract uses an incompatible settlement-unit version. Redeploy the current contract before trading.');
+  }
+  if (settlementAssetDecimals !== 8n) throw new Error('The deployed bonding-curve contract has an unsupported settlement asset.');
+  const quote = tradeType === 'buy'
+    ? await protocol.getBuyQuote(marketId, amountUnits)
+    : await protocol.getSellQuote(marketId, amountUnits);
+  const feeBps = await protocol.protocolFeeBps();
+  const fee = (quote * feeBps) / 10000n;
+  const totalTinybar = tradeType === 'buy' ? quote + fee : quote - fee;
+  return {
+    quote,
+    fee,
+    totalTinybar,
+    transactionValueWei: tradeType === 'buy' ? tinybarToWei(totalTinybar) : 0n
+  };
+}
+
+export async function getMarketStateOnChain({ marketId, tokenDecimals }) {
+  if (!env.PULSE_BONDING_CURVE_ADDRESS) throw new Error('Bonding curve address is not configured');
+  const provider = new JsonRpcProvider(env.HEDERA_RPC_URL);
+  const protocol = new Contract(env.PULSE_BONDING_CURVE_ADDRESS, protocolQuoteAbi, provider);
+  const [market, currentPrice] = await Promise.all([
+    protocol.markets(marketId),
+    protocol.getCurrentPrice(marketId)
+  ]);
+  if (!market.active) throw new Error('The on-chain market is inactive.');
+  return {
+    currentPrice: formatUnits(currentPrice, 8),
+    circulatingSupply: formatUnits(market.supply, tokenDecimals),
+    reserveBalance: formatUnits(market.reserve, 8)
+  };
 }
