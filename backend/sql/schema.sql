@@ -63,12 +63,25 @@ CREATE TABLE IF NOT EXISTS milestones (
     status VARCHAR(30) NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','in_progress','completed','verified')), evidence_url TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS token_updates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    market_id UUID NOT NULL REFERENCES person_markets(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id),
+    title VARCHAR(200) NOT NULL,
+    body TEXT NOT NULL,
+    update_type VARCHAR(30) NOT NULL DEFAULT 'general'
+        CHECK (update_type IN ('general','milestone','announcement','warning')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_markets_user_id ON person_markets(user_id);
 CREATE INDEX IF NOT EXISTS idx_markets_status ON person_markets(status);
 CREATE INDEX IF NOT EXISTS idx_holdings_market_id ON holdings(market_id);
 CREATE INDEX IF NOT EXISTS idx_trades_market_created ON trades(market_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_price_ticks_market_created ON price_ticks(market_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_milestones_user_id ON milestones(user_id);
+CREATE INDEX IF NOT EXISTS idx_token_updates_market ON token_updates(market_id, created_at DESC);
 
 DROP TRIGGER IF EXISTS users_updated_at ON users;
 CREATE TRIGGER users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -78,3 +91,5 @@ DROP TRIGGER IF EXISTS markets_updated_at ON person_markets;
 CREATE TRIGGER markets_updated_at BEFORE UPDATE ON person_markets FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 DROP TRIGGER IF EXISTS holdings_updated_at ON holdings;
 CREATE TRIGGER holdings_updated_at BEFORE UPDATE ON holdings FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS token_updates_updated_at ON token_updates;
+CREATE TRIGGER token_updates_updated_at BEFORE UPDATE ON token_updates FOR EACH ROW EXECUTE FUNCTION set_updated_at();

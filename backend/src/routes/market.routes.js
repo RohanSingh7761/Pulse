@@ -18,9 +18,15 @@ const marketInput = z.object({
 });
 const amountInput = z.object({ amount: z.string().regex(/^\d+(\.\d+)?$/) });
 const prepareInput = z.object({ tradeType: z.enum(['buy', 'sell']), tokenAmount: z.string().regex(/^\d+(\.\d+)?$/), maxSlippageBps: z.number().int().min(0).max(2000).default(100) });
+const updateInput = z.object({
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(1),
+  update_type: z.enum(['general', 'milestone', 'announcement', 'warning']).default('general'),
+});
 
 export const marketRouter = Router();
 
+/* ─── List markets ─────────────────────────────────────────────── */
 marketRouter.get('/', async (request, response, next) => {
   try {
     const result = await pool.query(`SELECT m.*, c.curve_type, c.base_price, c.slope, c.max_supply
@@ -30,6 +36,7 @@ marketRouter.get('/', async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
+/* ─── Create market ────────────────────────────────────────────── */
 marketRouter.post('/', requireAuth, async (request, response, next) => {
   const parsed = marketInput.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: 'validation_error', details: parsed.error.issues });
@@ -63,6 +70,7 @@ marketRouter.post('/', requireAuth, async (request, response, next) => {
   } finally { database.release(); }
 });
 
+/* ─── Helpers ──────────────────────────────────────────────────── */
 async function getMarket(request, response) {
   const result = await pool.query(`SELECT m.*, c.curve_type, c.base_price, c.slope, c.max_supply
     FROM person_markets m JOIN bonding_curves c ON c.market_id = m.id WHERE m.id = $1`, [request.params.id]);
@@ -74,10 +82,43 @@ function curveInput(market, amount) {
   return { basePrice: market.base_price, slope: market.slope, supply: market.circulating_supply, amount, maxSupply: market.max_supply, reserveBalance: market.reserve_balance };
 }
 
+/* ─── Get single market (with creator info) ────────────────────── */
 marketRouter.get('/:id', async (request, response, next) => {
-  try { const market = await getMarket(request, response); if (market) response.json({ market }); } catch (error) { next(error); }
+  try {
+    const result = await pool.query(
+      `SELECT m.*, c.curve_type, c.base_price, c.slope, c.max_supply,
+              u.username, u.display_name, u.bio, u.avatar_url,
+              p.headline, p.category, p.location, p.website_url,
+              p.twitter_url, p.github_url, p.linkedin_url
+       FROM person_markets m
+       JOIN bonding_curves c ON c.market_id = m.id
+       JOIN users u ON u.id = m.user_id
+       LEFT JOIN profiles p ON p.user_id = m.user_id
+       WHERE m.id = $1`,
+      [request.params.id]
+    );
+    if (!result.rows[0]) return response.status(404).json({ error: 'market_not_found' });
+    const row = result.rows[0];
+    const market = {
+      id: row.id, user_id: row.user_id, name: row.name, symbol: row.symbol, status: row.status,
+      token_id: row.token_id, token_decimals: row.token_decimals,
+      contract_address: row.contract_address, contract_market_id: row.contract_market_id,
+      current_price: row.current_price, circulating_supply: row.circulating_supply,
+      reserve_balance: row.reserve_balance, total_volume: row.total_volume, holder_count: row.holder_count,
+      curve_type: row.curve_type, base_price: row.base_price, slope: row.slope, max_supply: row.max_supply,
+      created_at: row.created_at, updated_at: row.updated_at,
+    };
+    const creator = {
+      username: row.username, display_name: row.display_name, bio: row.bio, avatar_url: row.avatar_url,
+      headline: row.headline, category: row.category, location: row.location,
+      website_url: row.website_url, twitter_url: row.twitter_url,
+      github_url: row.github_url, linkedin_url: row.linkedin_url,
+    };
+    response.json({ market, creator });
+  } catch (error) { next(error); }
 });
 
+/* ─── Quotes ───────────────────────────────────────────────────── */
 marketRouter.get('/:id/quote/buy', async (request, response, next) => {
   try { const market = await getMarket(request, response); if (!market) return; response.json(quoteBuy(curveInput(market, amountInput.parse(request.query).amount))); }
   catch (error) { next(error); }
@@ -88,6 +129,7 @@ marketRouter.get('/:id/quote/sell', async (request, response, next) => {
   catch (error) { next(error); }
 });
 
+/* ─── Chart / Trades / Holders ─────────────────────────────────── */
 marketRouter.get('/:id/chart', async (request, response, next) => {
   try { const result = await pool.query('SELECT price, supply, reserve_balance, created_at FROM price_ticks WHERE market_id = $1 ORDER BY created_at ASC LIMIT 500', [request.params.id]); response.json({ ticks: result.rows }); }
   catch (error) { next(error); }
@@ -105,6 +147,7 @@ marketRouter.get('/:id/holders', async (request, response, next) => {
   catch (error) { next(error); }
 });
 
+/* ─── Prepare trade ─────────────────────────────────────────────── */
 marketRouter.post('/:id/trades/prepare', requireAuth, async (request, response, next) => {
   const parsed = prepareInput.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: 'validation_error', details: parsed.error.issues });
@@ -118,8 +161,6 @@ marketRouter.post('/:id/trades/prepare', requireAuth, async (request, response, 
     const deadline = Math.floor(Date.now() / 1000) + Number(process.env.TRANSACTION_DEADLINE_SECONDS || 300);
     const decimals = Number(market.token_decimals || 8);
     const amountUnits = parseUnits(String(tokenAmount), decimals).toString();
-    // A trade must use the contract's current quote. Falling back to the database
-    // can encode an old supply and guarantees a revert when the curve has moved.
     const onChain = await quoteTradeOnChain({ marketId: market.contract_market_id, amountUnits, tradeType });
     const totalTinybar = onChain.totalTinybar;
     const maxCostUnits = tradeType === 'buy'
@@ -136,106 +177,125 @@ marketRouter.post('/:id/trades/prepare', requireAuth, async (request, response, 
   } catch (error) { next(error); }
 });
 
+/* ─── Confirm trade ─────────────────────────────────────────────── */
 marketRouter.post('/:id/trades/:tradeId/confirm', requireAuth, async (request, response, next) => {
-  const input = z.object({ transactionId: z.string().trim().min(3), status: z.enum(['confirmed', 'failed']) }).safeParse(request.body);
+  const input = z.object({ transactionId: z.string().min(1), status: z.enum(['confirmed', 'failed']) }).safeParse(request.body);
   if (!input.success) return response.status(400).json({ error: 'validation_error', details: input.error.issues });
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 1. Mark the trade as confirmed/failed
     const tradeResult = await client.query(
-      `UPDATE trades SET status = $1::varchar, transaction_id = $2,
-        confirmed_at = CASE WHEN $1::varchar = 'confirmed'::varchar THEN now() ELSE NULL END
-       WHERE id = $3 AND user_id = $4 RETURNING *`,
-      [input.data.status, input.data.transactionId, request.params.tradeId, request.user.sub]
+      `SELECT t.*, m.circulating_supply, m.reserve_balance, m.current_price, m.holder_count,
+              c.base_price, c.slope
+       FROM trades t
+       JOIN person_markets m ON m.id = t.market_id
+       JOIN bonding_curves c ON c.market_id = t.market_id
+       WHERE t.id = $1 AND t.market_id = $2 AND t.user_id = $3`,
+      [request.params.tradeId, request.params.id, request.user.sub]
     );
-    if (!tradeResult.rows[0]) { await client.query('ROLLBACK'); return response.status(404).json({ error: 'trade_not_found' }); }
+
+    if (!tradeResult.rows[0]) return response.status(404).json({ error: 'trade_not_found' });
     const trade = tradeResult.rows[0];
 
-    // 2. Only update derived state for confirmed trades
+    if (trade.status === 'confirmed') {
+      await client.query('ROLLBACK');
+      return response.json({ trade });
+    }
+
+    await client.query(
+      `UPDATE trades SET status = $1, transaction_id = $2, confirmed_at = now() WHERE id = $3`,
+      [input.data.status, input.data.transactionId, trade.id]
+    );
+
     if (input.data.status === 'confirmed') {
-      // Fetch current market state + bonding curve params
-      const marketResult = await client.query(
-        `SELECT m.circulating_supply, m.reserve_balance, m.total_volume,
-                c.base_price, c.slope
-         FROM person_markets m
-         JOIN bonding_curves c ON c.market_id = m.id
-         WHERE m.id = $1`,
-        [trade.market_id]
+      const isBuy = trade.trade_type === 'buy';
+      const tokenDelta = isBuy ? Number(trade.token_amount) : -Number(trade.token_amount);
+      const reserveDelta = isBuy ? Number(trade.settlement_amount) : -Number(trade.settlement_amount);
+
+      const newSupply = Math.max(0, Number(trade.circulating_supply) + tokenDelta);
+      const newReserve = Math.max(0, Number(trade.reserve_balance) + reserveDelta);
+      const newPrice = Number(trade.base_price) + Number(trade.slope) * newSupply;
+      const newVolume = Number(trade.settlement_amount);
+
+      await client.query(
+        `UPDATE person_markets
+         SET current_price = $1, circulating_supply = $2, reserve_balance = $3,
+             total_volume = total_volume + $4
+         WHERE id = $5`,
+        [newPrice, newSupply, newReserve, newVolume, trade.market_id]
       );
-      if (marketResult.rows[0]) {
-        const mkt = marketResult.rows[0];
-        const tokenAmt  = Number(trade.token_amount);
-        const settleAmt = Number(trade.settlement_amount);
-        const isBuy     = trade.trade_type === 'buy';
 
-        const newSupply  = isBuy
-          ? Number(mkt.circulating_supply) + tokenAmt
-          : Math.max(0, Number(mkt.circulating_supply) - tokenAmt);
-        const newReserve = isBuy
-          ? Number(mkt.reserve_balance) + settleAmt
-          : Math.max(0, Number(mkt.reserve_balance) - settleAmt);
-        const newPrice   = Number(mkt.base_price) + Number(mkt.slope) * newSupply;
-        const newVolume  = Number(mkt.total_volume) + settleAmt;
-
-        // 3. Update person_markets
+      if (isBuy) {
         await client.query(
-          `UPDATE person_markets
-           SET current_price       = $1,
-               circulating_supply  = $2,
-               reserve_balance     = $3,
-               total_volume        = $4
-           WHERE id = $5`,
-          [newPrice, newSupply, newReserve, newVolume, trade.market_id]
+          `INSERT INTO holdings (user_id, market_id, token_balance, average_entry_price, total_invested)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (user_id, market_id) DO UPDATE SET
+             average_entry_price = (holdings.total_invested + EXCLUDED.total_invested) / (holdings.token_balance + EXCLUDED.token_balance),
+             total_invested = holdings.total_invested + EXCLUDED.total_invested,
+             token_balance = holdings.token_balance + EXCLUDED.token_balance,
+             updated_at = now()`,
+          [request.user.sub, trade.market_id, trade.token_amount, trade.execution_price, trade.settlement_amount]
         );
-
-        // 4. Upsert holdings for the trader
-        if (isBuy) {
-          await client.query(
-            `INSERT INTO holdings (user_id, market_id, token_balance, average_entry_price, total_invested)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (user_id, market_id) DO UPDATE
-               SET token_balance       = holdings.token_balance + EXCLUDED.token_balance,
-                   total_invested      = holdings.total_invested + EXCLUDED.total_invested,
-                   average_entry_price = (holdings.total_invested + EXCLUDED.total_invested)
-                                         / NULLIF(holdings.token_balance + EXCLUDED.token_balance, 0),
-                   updated_at          = now()`,
-            [trade.user_id, trade.market_id, tokenAmt, newPrice, settleAmt]
-          );
-        } else {
-          // On sell: reduce balance; keep avg_entry_price unchanged (standard convention)
-          await client.query(
-            `UPDATE holdings
-             SET token_balance  = GREATEST(0, token_balance - $1),
-                 total_invested = GREATEST(0, total_invested - $2),
-                 updated_at     = now()
-             WHERE user_id = $3 AND market_id = $4`,
-            [tokenAmt, settleAmt, trade.user_id, trade.market_id]
-          );
-        }
-
-        // 5. Recount holder_count (anyone with balance > 0)
-        const holderCountResult = await client.query(
-          `SELECT COUNT(*) AS cnt FROM holdings WHERE market_id = $1 AND token_balance > 0`,
-          [trade.market_id]
-        );
+      } else {
         await client.query(
-          `UPDATE person_markets SET holder_count = $1 WHERE id = $2`,
-          [Number(holderCountResult.rows[0].cnt), trade.market_id]
-        );
-
-        // 6. Record a price tick for the chart
-        await client.query(
-          `INSERT INTO price_ticks (market_id, price, supply, reserve_balance)
-           VALUES ($1, $2, $3, $4)`,
-          [trade.market_id, newPrice, newSupply, newReserve]
+          `UPDATE holdings SET token_balance = GREATEST(0, token_balance - $1), updated_at = now()
+           WHERE user_id = $2 AND market_id = $3`,
+          [trade.token_amount, request.user.sub, trade.market_id]
         );
       }
+
+      const holdersResult = await client.query(
+        `SELECT COUNT(*) FROM holdings WHERE market_id = $1 AND token_balance > 0`,
+        [trade.market_id]
+      );
+      await client.query(
+        `UPDATE person_markets SET holder_count = $1 WHERE id = $2`,
+        [parseInt(holdersResult.rows[0].count, 10), trade.market_id]
+      );
+
+      await client.query(
+        `INSERT INTO price_ticks (market_id, price, supply, reserve_balance)
+         VALUES ($1, $2, $3, $4)`,
+        [trade.market_id, newPrice, newSupply, newReserve]
+      );
     }
 
     await client.query('COMMIT');
     await logActivity(`trade.${input.data.status}`, { userId: request.user.sub, tradeId: request.params.tradeId, transactionId: input.data.transactionId });
     response.json({ trade });
   } catch (error) { await client.query('ROLLBACK'); next(error); } finally { client.release(); }
+});
+
+/* ─── Creator Updates ───────────────────────────────────────────── */
+marketRouter.get('/:id/updates', async (request, response, next) => {
+  try {
+    const limit = Math.min(Number(request.query.limit) || 20, 50);
+    const result = await pool.query(
+      `SELECT tu.*, u.username, u.display_name FROM token_updates tu
+       JOIN users u ON u.id = tu.user_id
+       WHERE tu.market_id = $1 ORDER BY tu.created_at DESC LIMIT $2`,
+      [request.params.id, limit]
+    );
+    response.json({ updates: result.rows });
+  } catch (error) { next(error); }
+});
+
+marketRouter.post('/:id/updates', requireAuth, async (request, response, next) => {
+  const parsed = updateInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'validation_error', details: parsed.error.issues });
+  try {
+    const market = await pool.query('SELECT user_id FROM person_markets WHERE id = $1', [request.params.id]);
+    if (!market.rows[0]) return response.status(404).json({ error: 'market_not_found' });
+    if (market.rows[0].user_id !== request.user.sub)
+      return response.status(403).json({ error: 'forbidden', message: 'Only the market creator can post updates.' });
+    const result = await pool.query(
+      `INSERT INTO token_updates (market_id, user_id, title, body, update_type)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [request.params.id, request.user.sub, parsed.data.title, parsed.data.body, parsed.data.update_type]
+    );
+    await logActivity('market.update.posted', { userId: request.user.sub, marketId: request.params.id, updateId: result.rows[0].id });
+    response.status(201).json({ update: result.rows[0] });
+  } catch (error) { next(error); }
 });
