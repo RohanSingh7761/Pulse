@@ -23,6 +23,8 @@ const updateInput = z.object({
   body: z.string().trim().min(1),
   update_type: z.enum(['general', 'milestone', 'announcement', 'warning']).default('general'),
 });
+const commentInput = z.object({ content: z.string().trim().min(1).max(1000) });
+const reactionInput = z.object({ reaction: z.enum(['like', 'dislike']) });
 
 export const marketRouter = Router();
 
@@ -51,6 +53,8 @@ marketRouter.post('/', requireAuth, async (request, response, next) => {
     marketId = market.rows[0].id;
     await database.query(`INSERT INTO bonding_curves (market_id, curve_type, base_price, slope, max_supply)
       VALUES ($1, $2, $3, $4, $5)`, [marketId, input.curveType, input.basePrice, input.slope, input.maxSupply]);
+    await database.query(`INSERT INTO price_ticks (market_id, price, supply, reserve_balance)
+      VALUES ($1, $2, 0, 0)`, [marketId, input.basePrice]);
     await database.query('COMMIT');
     const chainMarket = await registerMarketOnChain({ ...input, decimals: Number(process.env.HEDERA_TOKEN_DECIMALS || 8) });
     token = { tokenId: chainMarket.tokenId, decimals: chainMarket.decimals, transactionId: chainMarket.transactionId, network: process.env.HEDERA_NETWORK || 'testnet' };
@@ -297,5 +301,109 @@ marketRouter.post('/:id/updates', requireAuth, async (request, response, next) =
     );
     await logActivity('market.update.posted', { userId: request.user.sub, marketId: request.params.id, updateId: result.rows[0].id });
     response.status(201).json({ update: result.rows[0] });
+  } catch (error) { next(error); }
+});
+
+/* ─── Comments ─────────────────────────────────────────────────── */
+marketRouter.get('/:id/comments', async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT mc.*, u.username, u.display_name, u.avatar_url
+       FROM market_comments mc
+       JOIN users u ON u.id = mc.user_id
+       WHERE mc.market_id = $1 ORDER BY mc.created_at DESC LIMIT 100`,
+      [request.params.id]
+    );
+    response.json({ comments: result.rows });
+  } catch (error) { next(error); }
+});
+
+marketRouter.post('/:id/comments', requireAuth, async (request, response, next) => {
+  const parsed = commentInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'validation_error', details: parsed.error.issues });
+  try {
+    const market = await pool.query('SELECT id FROM person_markets WHERE id = $1', [request.params.id]);
+    if (!market.rows[0]) return response.status(404).json({ error: 'market_not_found' });
+    const result = await pool.query(
+      `INSERT INTO market_comments (market_id, user_id, content)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [request.params.id, request.user.sub, parsed.data.content]
+    );
+    const userRes = await pool.query('SELECT username, display_name, avatar_url FROM users WHERE id = $1', [request.user.sub]);
+    const comment = { ...result.rows[0], ...userRes.rows[0] };
+    await logActivity('market.comment.posted', { userId: request.user.sub, marketId: request.params.id, commentId: comment.id });
+    response.status(201).json({ comment });
+  } catch (error) { next(error); }
+});
+
+marketRouter.delete('/:id/comments/:commentId', requireAuth, async (request, response, next) => {
+  try {
+    const comment = await pool.query('SELECT user_id FROM market_comments WHERE id = $1 AND market_id = $2', [request.params.commentId, request.params.id]);
+    if (!comment.rows[0]) return response.status(404).json({ error: 'comment_not_found' });
+    if (comment.rows[0].user_id !== request.user.sub) return response.status(403).json({ error: 'forbidden' });
+    await pool.query('DELETE FROM market_comments WHERE id = $1', [request.params.commentId]);
+    response.json({ success: true });
+  } catch (error) { next(error); }
+});
+
+/* ─── Reactions (Likes / Dislikes) ────────────────────────────── */
+marketRouter.get('/:id/reactions', async (request, response, next) => {
+  try {
+    const counts = await pool.query(
+      `SELECT
+         COUNT(CASE WHEN reaction_type = 'like' THEN 1 END)::int AS likes,
+         COUNT(CASE WHEN reaction_type = 'dislike' THEN 1 END)::int AS dislikes
+       FROM market_reactions WHERE market_id = $1`,
+      [request.params.id]
+    );
+    let userReaction = null;
+    const userId = request.query.userId;
+    if (userId) {
+      const userRec = await pool.query('SELECT reaction_type FROM market_reactions WHERE market_id = $1 AND user_id = $2', [request.params.id, userId]);
+      if (userRec.rows[0]) userReaction = userRec.rows[0].reaction_type;
+    }
+    response.json({
+      likes: counts.rows[0]?.likes || 0,
+      dislikes: counts.rows[0]?.dislikes || 0,
+      userReaction,
+    });
+  } catch (error) { next(error); }
+});
+
+marketRouter.post('/:id/reactions', requireAuth, async (request, response, next) => {
+  const parsed = reactionInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'validation_error', details: parsed.error.issues });
+  try {
+    const { reaction } = parsed.data;
+    const userId = request.user.sub;
+    const marketId = request.params.id;
+
+    const existing = await pool.query('SELECT reaction_type FROM market_reactions WHERE market_id = $1 AND user_id = $2', [marketId, userId]);
+    if (existing.rows[0]) {
+      if (existing.rows[0].reaction_type === reaction) {
+        await pool.query('DELETE FROM market_reactions WHERE market_id = $1 AND user_id = $2', [marketId, userId]);
+      } else {
+        await pool.query('UPDATE market_reactions SET reaction_type = $1 WHERE market_id = $2 AND user_id = $3', [reaction, marketId, userId]);
+      }
+    } else {
+      await pool.query('INSERT INTO market_reactions (market_id, user_id, reaction_type) VALUES ($1, $2, $3)', [marketId, userId, reaction]);
+    }
+
+    const counts = await pool.query(
+      `SELECT
+         COUNT(CASE WHEN reaction_type = 'like' THEN 1 END)::int AS likes,
+         COUNT(CASE WHEN reaction_type = 'dislike' THEN 1 END)::int AS dislikes
+       FROM market_reactions WHERE market_id = $1`,
+      [marketId]
+    );
+
+    const userRec = await pool.query('SELECT reaction_type FROM market_reactions WHERE market_id = $1 AND user_id = $2', [marketId, userId]);
+    const currentUserReaction = userRec.rows[0] ? userRec.rows[0].reaction_type : null;
+
+    response.json({
+      likes: counts.rows[0]?.likes || 0,
+      dislikes: counts.rows[0]?.dislikes || 0,
+      userReaction: currentUserReaction,
+    });
   } catch (error) { next(error); }
 });

@@ -75,6 +75,24 @@ CREATE TABLE IF NOT EXISTS token_updates (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS market_comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    market_id UUID NOT NULL REFERENCES person_markets(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS market_reactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    market_id UUID NOT NULL REFERENCES person_markets(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reaction_type VARCHAR(10) NOT NULL CHECK (reaction_type IN ('like', 'dislike')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (market_id, user_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_markets_user_id ON person_markets(user_id);
 CREATE INDEX IF NOT EXISTS idx_markets_status ON person_markets(status);
 CREATE INDEX IF NOT EXISTS idx_holdings_market_id ON holdings(market_id);
@@ -82,6 +100,8 @@ CREATE INDEX IF NOT EXISTS idx_trades_market_created ON trades(market_id, create
 CREATE INDEX IF NOT EXISTS idx_price_ticks_market_created ON price_ticks(market_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_milestones_user_id ON milestones(user_id);
 CREATE INDEX IF NOT EXISTS idx_token_updates_market ON token_updates(market_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_market_comments_market ON market_comments(market_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_market_reactions_market ON market_reactions(market_id);
 
 DROP TRIGGER IF EXISTS users_updated_at ON users;
 CREATE TRIGGER users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -92,4 +112,6 @@ CREATE TRIGGER markets_updated_at BEFORE UPDATE ON person_markets FOR EACH ROW E
 DROP TRIGGER IF EXISTS holdings_updated_at ON holdings;
 CREATE TRIGGER holdings_updated_at BEFORE UPDATE ON holdings FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 DROP TRIGGER IF EXISTS token_updates_updated_at ON token_updates;
-CREATE TRIGGER token_updates_updated_at BEFORE UPDATE ON token_updates FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER token_updates_updated_at BEFORE UPDATE ON token_updates FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS market_comments_updated_at ON market_comments;
+CREATE TRIGGER market_comments_updated_at BEFORE UPDATE ON market_comments FOR EACH ROW EXECUTE FUNCTION set_updated_at();

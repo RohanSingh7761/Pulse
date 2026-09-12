@@ -14,7 +14,7 @@ export default function MarketCard({ market, onClick }) {
           <span>{market.handle} · {market.category}</span>
         </div>
         <span className={market.change >= 0 ? 'change-pill positive-bg' : 'change-pill negative-bg'}>
-          {market.change >= 0 ? '+' : ''}{market.change}%
+          {market.change >= 0 ? '+' : ''}{market.change.toFixed(2)}%
         </span>
       </div>
       <div className="market-card-middle">
@@ -22,7 +22,7 @@ export default function MarketCard({ market, onClick }) {
           <span className="mini-label">Price</span>
           <strong>{formatCurrency(market.price)}</strong>
         </div>
-        <Sparkline accent={market.accent} down={market.change < 0} />
+        <Sparkline accent={market.accent} down={market.change < 0} data={market.ticks} />
       </div>
       <div className="market-card-footer">
         <span><small>Market cap</small>{market.marketCap}</span>

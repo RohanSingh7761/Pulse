@@ -1,17 +1,43 @@
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowUpRight, ChevronDown, CircleDollarSign, ShieldCheck, TrendingUp } from 'lucide-react'
 import Brand from '../components/ui/Brand'
 import Sparkline from '../components/ui/Sparkline'
 import Stat from '../components/ui/Stat'
 import { useAuth } from '../context/AuthContext'
+import { API_URL } from '../lib/api'
+import { formatCurrency } from '../lib/constants'
 
 export default function LandingPage() {
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
 
+  const [stats, setStats] = useState({ count: 0, totalVolume: 0, topMarket: null })
+
+  useEffect(() => {
+    async function loadStats() {
+      try {
+        const res = await fetch(`${API_URL}/v1/markets`)
+        if (!res.ok) return
+        const payload = await res.json()
+        const markets = payload.markets || []
+        const count = markets.length
+        const totalVolume = markets.reduce((acc, m) => acc + Number(m.total_volume || 0), 0)
+        const topMarket = markets[0] || null
+        setStats({ count, totalVolume, topMarket })
+      } catch { /* ignore */ }
+    }
+    loadStats()
+  }, [])
+
   function enter() {
     navigate(isAuthenticated ? '/app' : '/auth')
   }
+
+  const topName = stats.topMarket?.name || 'Pulse Market'
+  const topSymbol = stats.topMarket?.symbol || 'PULSE'
+  const topPrice = Number(stats.topMarket?.current_price || 1.0)
+  const topInitials = topName.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase()
 
   return (
     <div className="landing-page">
@@ -19,9 +45,9 @@ export default function LandingPage() {
       <header className="landing-nav">
         <Brand />
         <div className="landing-links">
-          <span>Markets</span>
-          <span>How it works</span>
-          <span>Protocol</span>
+          <span style={{ cursor: 'pointer' }} onClick={() => navigate('/app')}>Markets</span>
+          <span style={{ cursor: 'pointer' }} onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}>How it works</span>
+          <span style={{ cursor: 'pointer' }} onClick={() => navigate('/app')}>Protocol</span>
         </div>
         <button className="button button-ghost" onClick={enter}>
           Launch console <ArrowUpRight size={15} />
@@ -29,11 +55,11 @@ export default function LandingPage() {
       </header>
 
       <main className="hero-content">
-        <div className="eyebrow"><span className="live-dot" /> A new market for human potential</div>
+        <div className="eyebrow"><span className="live-dot" /> A live market for human potential</div>
         <h1>Trade the <em>signal</em><br />behind the story.</h1>
         <p className="hero-copy">
           Pulse turns conviction into a living market. Back founders and builders with real capital,
-          watch them hit milestones, and earn as their momentum compounds on-chain.
+          track their progress through verified updates, and participate on-chain.
         </p>
         <div className="hero-actions">
           <button className="button button-primary" onClick={enter}>
@@ -47,8 +73,8 @@ export default function LandingPage() {
           </button>
         </div>
         <div className="hero-stats">
-          <Stat label="Markets live" value="2,481" />
-          <Stat label="Volume, 24h" value="$1.84M" />
+          <Stat label="Markets live" value={stats.count ? stats.count.toString() : 'Live'} />
+          <Stat label="Volume, 24h" value={formatCurrency(stats.totalVolume)} />
           <Stat label="Network" value="Hedera" />
         </div>
       </main>
@@ -61,17 +87,17 @@ export default function LandingPage() {
         </div>
         <div className="terminal-content">
           <div className="terminal-profile">
-            <div className="avatar avatar-lg">AC</div>
+            <div className="avatar avatar-lg">{topInitials}</div>
             <div>
-              <span className="mini-label">Trending market</span>
-              <strong>Alex Chen <small>· ALEX</small></strong>
-              <span className="terminal-role">Founder / climate systems</span>
+              <span className="mini-label">Featured market</span>
+              <strong>{topName} <small>· {topSymbol}</small></strong>
+              <span className="terminal-role">{stats.topMarket?.category || 'Builder market'}</span>
             </div>
           </div>
           <div className="terminal-price">
             <span className="mini-label">Current price</span>
-            <strong>$4.82</strong>
-            <span className="gain"><ArrowUpRight size={13} /> +18.6%</span>
+            <strong>{formatCurrency(topPrice)}</strong>
+            <span className="gain"><ArrowUpRight size={13} /> Active</span>
           </div>
           <Sparkline />
         </div>

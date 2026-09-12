@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import {
   ArrowDownRight, ArrowUpRight, Bell, Megaphone, ShieldCheck,
-  Globe, Send, TrendingUp, AlertTriangle, Info,
+  Globe, Send, TrendingUp, AlertTriangle, Info, ThumbsUp, ThumbsDown,
+  MessageSquare, Trash2,
 } from 'lucide-react'
 
 const IconTwitter = () => (
@@ -33,6 +34,9 @@ export default function TokenDetailPage() {
   const [market, setMarket] = useState(location.state?.market || null)
   const [creator, setCreator] = useState(null)
   const [loading, setLoading] = useState(!location.state?.market)
+  const [ticks, setTicks] = useState([])
+  const [chartMode, setChartMode] = useState('Candles') // 'Candles' | 'Line'
+  const [reactions, setReactions] = useState({ likes: 0, dislikes: 0, userReaction: null })
 
   useEffect(() => {
     async function fetchMarket() {
@@ -48,8 +52,55 @@ export default function TokenDetailPage() {
     fetchMarket()
   }, [id])
 
+  useEffect(() => {
+    async function fetchChart() {
+      try {
+        const res = await fetch(`${API_URL}/v1/markets/${id}/chart`)
+        if (res.ok) {
+          const d = await res.json()
+          setTicks(d.ticks || [])
+        }
+      } catch { setTicks([]) }
+    }
+    fetchChart()
+  }, [id])
+
+  useEffect(() => {
+    async function fetchReactions() {
+      try {
+        const url = userId ? `${API_URL}/v1/markets/${id}/reactions?userId=${userId}` : `${API_URL}/v1/markets/${id}/reactions`
+        const res = await fetch(url)
+        if (res.ok) {
+          const d = await res.json()
+          setReactions(d)
+        }
+      } catch { /* ignore */ }
+    }
+    fetchReactions()
+  }, [id, userId])
+
+  async function toggleReaction(type) {
+    if (!authToken) return
+    try {
+      const res = await fetch(`${API_URL}/v1/markets/${id}/reactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({ reaction: type }),
+      })
+      if (res.ok) {
+        const d = await res.json()
+        setReactions(d)
+      }
+    } catch { /* ignore */ }
+  }
+
   function handleMarketUpdated(updated) {
     setMarket(updated)
+    // Reload chart ticks after a trade
+    fetch(`${API_URL}/v1/markets/${id}/chart`)
+      .then((res) => res.json())
+      .then((d) => setTicks(d.ticks || []))
+      .catch(() => {})
   }
 
   if (loading) return <div className="page-section"><p className="muted">Loading market...</p></div>
@@ -75,12 +126,30 @@ export default function TokenDetailPage() {
             <p>{market.bio}</p>
           </div>
         </div>
-        <button className="button button-light"><Bell size={15} /> Watch market</button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            className={`button ${reactions.userReaction === 'like' ? 'button-primary' : 'button-light'}`}
+            onClick={() => toggleReaction('like')}
+            title="Like this market"
+            disabled={!authToken}
+          >
+            <ThumbsUp size={14} /> {reactions.likes}
+          </button>
+          <button
+            className={`button ${reactions.userReaction === 'dislike' ? 'button-outline' : 'button-light'}`}
+            onClick={() => toggleReaction('dislike')}
+            title="Dislike this market"
+            disabled={!authToken}
+          >
+            <ThumbsDown size={14} /> {reactions.dislikes}
+          </button>
+          <button className="button button-light"><Bell size={15} /> Watch market</button>
+        </div>
       </div>
 
       {/* Stats row */}
       <div className="asset-stats">
-        <Stat label="Current price" value={formatCurrency(market.price)} note={`${market.change >= 0 ? '+' : ''}${market.change}% today`} positive={market.change >= 0} />
+        <Stat label="Current price" value={formatCurrency(market.price)} note={`${market.change >= 0 ? '+' : ''}${market.change.toFixed(2)}% today`} positive={market.change >= 0} />
         <Stat label="Reserve balance" value={formatCurrency(Number(market.reserve_balance || market.marketCap || 0))} note="HBAR in curve" />
         <Stat label="24h volume" value={formatCurrency(Number(market.total_volume || market.volume || 0))} note="Across all trades" />
         <Stat label="Holders" value={Number(market.holder_count ?? market.holders ?? 0).toLocaleString()} note="Unique wallets" />
@@ -93,14 +162,21 @@ export default function TokenDetailPage() {
           <div className="panel-head">
             <div><h2>Price history</h2><span>Market price in USD</span></div>
             <div className="chart-controls">
-              <button className="selected">Candles</button>
-              <button>Line</button>
-              <button>1D</button>
-              <button>1W</button>
-              <button>1M</button>
+              <button
+                className={chartMode === 'Candles' ? 'selected' : ''}
+                onClick={() => setChartMode('Candles')}
+              >
+                Candles
+              </button>
+              <button
+                className={chartMode === 'Line' ? 'selected' : ''}
+                onClick={() => setChartMode('Line')}
+              >
+                Line
+              </button>
             </div>
           </div>
-          <CandleChart />
+          <CandleChart ticks={ticks} mode={chartMode} basePrice={market.base_price} />
         </div>
 
         {/* Trade panel */}
@@ -112,6 +188,9 @@ export default function TokenDetailPage() {
 
       {/* Updates feed */}
       <UpdatesFeed marketId={id} authToken={authToken} isCreator={isCreator} marketUserId={market.user_id} />
+
+      {/* Discussion / Comments Section */}
+      <CommentsSection marketId={id} authToken={authToken} userId={userId} />
     </section>
   )
 }
@@ -402,6 +481,136 @@ function UpdatesFeed({ marketId, authToken, isCreator }) {
               </div>
               <h3 className="update-title">{update.title}</h3>
               <p className="update-body">{update.body}</p>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ─── Comments Section ─────────────────────────────────────────── */
+function CommentsSection({ marketId, authToken, userId }) {
+  const [comments, setComments] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [content, setContent] = useState('')
+  const [posting, setPosting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function loadComments() {
+    try {
+      const res = await fetch(`${API_URL}/v1/markets/${marketId}/comments`)
+      if (res.ok) {
+        const d = await res.json()
+        setComments(d.comments || [])
+      }
+    } catch { setComments([]) }
+    setLoading(false)
+  }
+
+  useEffect(() => { loadComments() }, [marketId])
+
+  async function handlePostComment(e) {
+    e.preventDefault()
+    if (!content.trim()) return
+    if (!authToken) { setError('Please connect your wallet to post a comment.'); return }
+    setPosting(true)
+    setError('')
+    try {
+      const res = await fetch(`${API_URL}/v1/markets/${marketId}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({ content }),
+      })
+      if (!res.ok) {
+        const d = await res.json()
+        throw new Error(d.message || 'Unable to post comment.')
+      }
+      setContent('')
+      await loadComments()
+    } catch (err) { setError(err.message) }
+    setPosting(false)
+  }
+
+  async function handleDeleteComment(commentId) {
+    try {
+      const res = await fetch(`${API_URL}/v1/markets/${marketId}/comments/${commentId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+      if (res.ok) await loadComments()
+    } catch { /* ignore */ }
+  }
+
+  return (
+    <div className="comments-section" style={{ marginTop: '3rem' }}>
+      <div className="section-title">
+        <div>
+          <h2>Market Discussion <span className="count">{comments.length}</span></h2>
+          <p>Community insights, feedback, and discussion for this market.</p>
+        </div>
+      </div>
+
+      <form className="update-compose" onSubmit={handlePostComment} style={{ marginBottom: '24px' }}>
+        <textarea
+          className="update-body-input"
+          placeholder={authToken ? "Share your conviction, question, or feedback..." : "Connect wallet to post a comment..."}
+          value={content}
+          disabled={!authToken || posting}
+          onChange={(e) => setContent(e.target.value)}
+          rows="3"
+          required
+        />
+        {error && <div className="form-error" style={{ color: '#ef4444', fontSize: '13px', marginTop: '6px' }}>{error}</div>}
+        <div className="update-compose-actions" style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="submit" className="button button-primary" disabled={!authToken || posting || !content.trim()}>
+            {posting ? 'Posting...' : 'Post Comment'} <Send size={14} />
+          </button>
+        </div>
+      </form>
+
+      {loading && <p className="muted" style={{ padding: '1rem 0' }}>Loading discussion...</p>}
+
+      {!loading && comments.length === 0 && (
+        <div className="updates-empty" style={{ textAlign: 'center', padding: '32px 16px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px dashed rgba(255,255,255,0.08)' }}>
+          <div className="updates-empty-icon" style={{ marginBottom: '8px', color: '#64748b' }}><MessageSquare size={22} /></div>
+          <p className="muted" style={{ margin: 0 }}>No comments yet. Be the first to start the conversation!</p>
+        </div>
+      )}
+
+      <div className="comments-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {comments.map((c) => {
+          const name = c.display_name || c.username || 'Backer'
+          const handle = c.username ? `@${c.username}` : ''
+          const initials = name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase()
+          const isMine = c.user_id === userId
+          return (
+            <div key={c.id} className="comment-card panel" style={{ padding: '16px 20px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                  <div className="avatar avatar-cyan avatar-sm">{initials}</div>
+                  <div>
+                    <strong style={{ fontSize: '14px', color: '#fff' }}>{name}</strong>
+                    {handle && <span style={{ fontSize: '12px', color: '#94a3b8', marginLeft: '6px' }}>{handle}</span>}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <time style={{ fontSize: '12px', color: '#64748b' }}>
+                    {new Date(c.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </time>
+                  {isMine && (
+                    <button
+                      className="icon-button"
+                      style={{ color: '#ef4444', padding: '2px', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                      onClick={() => handleDeleteComment(c.id)}
+                      title="Delete comment"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5', color: '#cbd5e1' }}>{c.content}</p>
             </div>
           )
         })}

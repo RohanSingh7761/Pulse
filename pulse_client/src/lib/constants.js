@@ -8,7 +8,10 @@ export const navItems = [
 ]
 
 export const formatCurrency = (value) =>
-  `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+export const formatNumber2Decimals = (value) =>
+  Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export const ACCENT_CYCLE = ['cyan', 'violet', 'orange', 'lime', 'pink']
 
@@ -17,15 +20,19 @@ export function getAccent(index) {
 }
 
 export function normalizeMarket(market, index = 0) {
+  const reserve = Number(market.reserve_balance || market.market_cap || 0)
+  const vol = Number(market.total_volume || 0)
   return {
     ...market,
     handle: market.username ? `@${market.username}` : 'Pulse market',
     category: market.category || 'Market',
     price: Number(market.current_price || 0),
     change: Number(market.change || 0),
-    marketCap: market.market_cap || '—',
-    volume: market.total_volume || '0',
-    holders: market.holder_count || 0,
+    marketCapFormatted: formatCurrency(reserve),
+    volumeFormatted: formatCurrency(vol),
+    marketCap: formatCurrency(reserve),
+    volume: formatCurrency(vol),
+    holders: Number(market.holder_count || 0),
     bio: market.bio || 'A live market on Pulse.',
     accent: market.accent || getAccent(index),
   }
