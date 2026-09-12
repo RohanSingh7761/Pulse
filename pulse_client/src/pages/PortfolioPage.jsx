@@ -117,39 +117,6 @@ export default function PortfolioPage() {
           })}
         </div>
       )}
-
-      {/* Explore more */}
-      {markets.length > 0 && (
-        <>
-          <div className="section-title" style={{ marginTop: '2.5rem' }}>
-            <div>
-              <h2>Explore more <span className="count">{markets.length}</span></h2>
-              <p>Markets you might want to follow.</p>
-            </div>
-          </div>
-          <div className="watchlist">
-            {markets.slice(0, 5).map((market) => (
-              <button
-                className="watch-row"
-                key={market.id}
-                onClick={() => navigate(`/app/market/${market.id}`, { state: { market } })}
-              >
-                <div className={`avatar avatar-${market.accent}`}>{market.symbol.slice(0, 2)}</div>
-                <div className="watch-name">
-                  <strong>{market.name}</strong>
-                  <span>{market.symbol} · {market.category}</span>
-                </div>
-                <Sparkline accent={market.accent} down={market.change < 0} />
-                <strong>{formatCurrency(market.price)}</strong>
-                <span className={market.change >= 0 ? 'positive' : 'negative'}>
-                  {market.change >= 0 ? '+' : ''}{market.change}%
-                </span>
-                <ArrowUpRight size={15} />
-              </button>
-            ))}
-          </div>
-        </>
-      )}
     </section>
   )
 }

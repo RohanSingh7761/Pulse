@@ -1,8 +1,10 @@
 import { ArrowUpRight } from 'lucide-react'
-import Sparkline from '../ui/Sparkline'
 import { formatCurrency } from '../../lib/constants'
 
 export default function MarketCard({ market, onClick }) {
+  const change = Number(market.change || 0)
+  const isPositive = change >= 0
+
   return (
     <button className="market-card" onClick={onClick}>
       <div className="market-card-top">
@@ -13,8 +15,8 @@ export default function MarketCard({ market, onClick }) {
           <strong>{market.name}</strong>
           <span>{market.handle} · {market.category}</span>
         </div>
-        <span className={market.change >= 0 ? 'change-pill positive-bg' : 'change-pill negative-bg'}>
-          {market.change >= 0 ? '+' : ''}{market.change.toFixed(2)}%
+        <span className={isPositive ? 'change-pill positive-bg' : 'change-pill negative-bg'}>
+          {isPositive ? '+' : ''}{change.toFixed(2)}%
         </span>
       </div>
       <div className="market-card-middle">
@@ -22,7 +24,15 @@ export default function MarketCard({ market, onClick }) {
           <span className="mini-label">Price</span>
           <strong>{formatCurrency(market.price)}</strong>
         </div>
-        <Sparkline accent={market.accent} down={market.change < 0} data={market.ticks} />
+        <div style={{ textAlign: 'right' }}>
+          <span className="mini-label">24h Change</span>
+          <span
+            className={isPositive ? 'positive' : 'negative'}
+            style={{ display: 'block', fontSize: '15px', fontWeight: 600, fontFamily: 'var(--font-mono)', marginTop: '6px' }}
+          >
+            {isPositive ? '+' : ''}{change.toFixed(2)}%
+          </span>
+        </div>
       </div>
       <div className="market-card-footer">
         <span><small>Market cap</small>{market.marketCap}</span>
@@ -33,3 +43,4 @@ export default function MarketCard({ market, onClick }) {
     </button>
   )
 }
+
