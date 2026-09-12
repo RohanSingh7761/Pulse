@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowUpRight } from 'lucide-react'
+import { ArrowUpRight, History } from 'lucide-react'
 import Sparkline from '../components/ui/Sparkline'
 import { API_URL } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
@@ -39,12 +39,15 @@ export default function PortfolioPage() {
 
   return (
     <section className="page-section">
-      <div className="page-heading">
+      <div className="page-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <span className="eyebrow">Your portfolio</span>
           <h1>Track your conviction.</h1>
           <p>Everything you own, in one clear view.</p>
         </div>
+        <button className="button button-outline" onClick={() => navigate('/app/trades')} style={{ gap: '6px' }}>
+          <History size={15} /> Trade history
+        </button>
       </div>
 
       {/* Overview card */}

@@ -1,8 +1,9 @@
-import { BarChart3, LayoutGrid, Plus, UserRound } from 'lucide-react'
+import { BarChart3, LayoutGrid, Plus, UserRound, History } from 'lucide-react'
 
 export const navItems = [
   { id: 'marketplace', label: 'Marketplace', path: '/app', icon: LayoutGrid },
   { id: 'portfolio', label: 'Portfolio', path: '/app/portfolio', icon: BarChart3 },
+  { id: 'trades', label: 'Trade history', path: '/app/trades', icon: History },
   { id: 'create', label: 'Create token', path: '/app/create', icon: Plus },
   { id: 'profile', label: 'Profile', path: '/app/profile', icon: UserRound },
 ]

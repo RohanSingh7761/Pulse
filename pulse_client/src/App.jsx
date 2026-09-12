@@ -6,6 +6,7 @@ import AuthPage from './pages/AuthPage'
 import MarketplacePage from './pages/MarketplacePage'
 import TokenDetailPage from './pages/TokenDetailPage'
 import PortfolioPage from './pages/PortfolioPage'
+import TradeHistoryPage from './pages/TradeHistoryPage'
 import CreateTokenPage from './pages/CreateTokenPage'
 import ProfilePage from './pages/ProfilePage'
 import './App.css'
@@ -21,6 +22,7 @@ export default function App() {
             <Route index element={<MarketplacePage />} />
             <Route path="market/:id" element={<TokenDetailPage />} />
             <Route path="portfolio" element={<PortfolioPage />} />
+            <Route path="trades" element={<TradeHistoryPage />} />
             <Route path="create" element={<CreateTokenPage />} />
             <Route path="profile" element={<ProfilePage />} />
           </Route>

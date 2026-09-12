@@ -74,3 +74,20 @@ userRouter.get('/me/holdings', async (request, response, next) => {
     response.json({ holdings: holdingsResult.rows, summary });
   } catch (error) { next(error); }
 });
+
+userRouter.get('/me/trades', async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT t.id, t.market_id, t.trade_type, t.token_amount, t.settlement_amount,
+              t.execution_price, t.status, t.transaction_id, t.created_at, t.confirmed_at,
+              m.name AS market_name, m.symbol AS market_symbol, m.token_id, m.current_price
+       FROM trades t
+       JOIN person_markets m ON m.id = t.market_id
+       WHERE t.user_id = $1
+       ORDER BY t.created_at DESC
+       LIMIT 200`,
+      [request.user.sub]
+    );
+    response.json({ trades: result.rows });
+  } catch (error) { next(error); }
+});
