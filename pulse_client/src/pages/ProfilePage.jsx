@@ -155,11 +155,7 @@ export default function ProfilePage() {
               />
             </div>
             <span className="completeness-label">{getCompleteness(form)}% complete</span>
-            {getCompleteness(form) < 100 && (
-              <p className="completeness-hint">
-                Complete your profile to unlock token creation and improve discoverability.
-              </p>
-            )}
+            
           </div>
         </div>
       </div>

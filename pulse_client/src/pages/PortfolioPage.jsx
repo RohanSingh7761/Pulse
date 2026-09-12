@@ -67,7 +67,6 @@ export default function PortfolioPage() {
 
       {!loading && holdings.length === 0 && (
         <div className="portfolio-empty">
-          <div className="portfolio-empty-icon">💼</div>
           <h3>No positions yet</h3>
           <p>Buy a token from the marketplace to get started.</p>
           <button className="button button-primary" onClick={() => navigate('/app')}>
