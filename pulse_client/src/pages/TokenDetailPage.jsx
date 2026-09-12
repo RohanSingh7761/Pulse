@@ -29,27 +29,30 @@ export default function TokenDetailPage() {
   const { id } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
-  const { wallet, authToken, userId } = useAuth()
+  const { wallet, authToken, userId, signOut } = useAuth()
 
   const [market, setMarket] = useState(location.state?.market || null)
   const [creator, setCreator] = useState(null)
   const [loading, setLoading] = useState(!location.state?.market)
   const [ticks, setTicks] = useState([])
-  const [chartMode, setChartMode] = useState('Candles') // 'Candles' | 'Line'
+  const [timeframe, setTimeframe] = useState('1D') // '1D' | '5D' | '1M' | '1Y' | 'YTD' | 'ALL'
   const [reactions, setReactions] = useState({ likes: 0, dislikes: 0, userReaction: null })
+
 
   useEffect(() => {
     async function fetchMarket() {
       try {
         const res = await fetch(`${API_URL}/v1/markets/${id}`)
-        if (!res.ok) { navigate('/app'); return }
+        if (!res.ok) return
         const payload = await res.json()
         setMarket(normalizeMarket(payload.market))
         if (payload.creator) setCreator(payload.creator)
-      } catch { navigate('/app') }
+      } catch { /* ignore */ }
       setLoading(false)
     }
     fetchMarket()
+    const timer = setInterval(fetchMarket, 3000)
+    return () => clearInterval(timer)
   }, [id])
 
   useEffect(() => {
@@ -60,9 +63,11 @@ export default function TokenDetailPage() {
           const d = await res.json()
           setTicks(d.ticks || [])
         }
-      } catch { setTicks([]) }
+      } catch { /* ignore */ }
     }
     fetchChart()
+    const timer = setInterval(fetchChart, 3000)
+    return () => clearInterval(timer)
   }, [id])
 
   useEffect(() => {
@@ -162,25 +167,22 @@ export default function TokenDetailPage() {
           <div className="panel-head">
             <div><h2>Price history</h2><span>Market price in USD</span></div>
             <div className="chart-controls">
-              <button
-                className={chartMode === 'Candles' ? 'selected' : ''}
-                onClick={() => setChartMode('Candles')}
-              >
-                Candles
-              </button>
-              <button
-                className={chartMode === 'Line' ? 'selected' : ''}
-                onClick={() => setChartMode('Line')}
-              >
-                Line
-              </button>
+              {['1D', '5D', '1M', '1Y', 'YTD', 'ALL'].map((tf) => (
+                <button
+                  key={tf}
+                  className={timeframe === tf ? 'selected' : ''}
+                  onClick={() => setTimeframe(tf)}
+                >
+                  {tf}
+                </button>
+              ))}
             </div>
           </div>
-          <CandleChart ticks={ticks} mode={chartMode} basePrice={market.base_price} />
+          <CandleChart ticks={ticks} timeframe={timeframe} basePrice={market.base_price} />
         </div>
 
         {/* Trade panel */}
-        <TradePanel market={market} wallet={wallet} authToken={authToken} onMarketUpdated={handleMarketUpdated} />
+        <TradePanel market={market} wallet={wallet} authToken={authToken} signOut={signOut} onMarketUpdated={handleMarketUpdated} />
 
         {/* Creator panel */}
         <CreatorPanel creator={creator} market={market} />
@@ -196,7 +198,7 @@ export default function TokenDetailPage() {
 }
 
 /* ─── Trade Panel ───────────────────────────────────────────────── */
-function TradePanel({ market, wallet, authToken, onMarketUpdated }) {
+function TradePanel({ market, wallet, authToken, signOut, onMarketUpdated }) {
   const [side, setSide] = useState('buy')
   const [amount, setAmount] = useState('10')
   const [quote, setQuote] = useState(null)
@@ -252,6 +254,10 @@ function TradePanel({ market, wallet, authToken, onMarketUpdated }) {
         body: JSON.stringify({ tradeType: side, tokenAmount: amount, maxSlippageBps: 100 }),
       })
       const result = await res.json()
+      if (res.status === 401 || result.error === 'invalid_or_expired_token' || result.error === 'authentication_required') {
+        if (signOut) signOut()
+        throw new Error('Your authentication session expired. Please connect wallet again to re-authenticate.')
+      }
       if (!res.ok) throw new Error(result.message || result.error || 'Unable to prepare trade')
       if (side === 'sell') {
         const tokenAddress = tokenIdToAddress(result.market.tokenId || market.token_id)
@@ -374,6 +380,7 @@ function UpdatesFeed({ marketId, authToken, isCreator }) {
   const [form, setForm] = useState({ title: '', body: '', update_type: 'general' })
   const [showForm, setShowForm] = useState(false)
   const [formError, setFormError] = useState('')
+  const [expanded, setExpanded] = useState(false)
 
   async function loadUpdates() {
     try {
@@ -402,6 +409,28 @@ function UpdatesFeed({ marketId, authToken, isCreator }) {
       await loadUpdates()
     } catch (err) { setFormError(err.message) }
     setPosting(false)
+  }
+
+  const visibleUpdates = expanded ? updates : updates.slice(0, 3)
+  const fourthUpdate = (!expanded && updates.length > 3) ? updates[3] : null
+
+  function renderUpdateItem(update) {
+    const meta = UPDATE_TYPE_META[update.update_type] || UPDATE_TYPE_META.general
+    const Icon = meta.icon
+    return (
+      <div key={update.id} className={`update-item ${meta.color}`}>
+        <div className="update-item-head">
+          <div className={`update-badge ${meta.color}`}>
+            <Icon size={11} /> {meta.label}
+          </div>
+          <time className="update-time">
+            {new Date(update.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+          </time>
+        </div>
+        <h3 className="update-title">{update.title}</h3>
+        <p className="update-body">{update.body}</p>
+      </div>
+    )
   }
 
   return (
@@ -465,26 +494,32 @@ function UpdatesFeed({ marketId, authToken, isCreator }) {
         </div>
       )}
 
-      <div className="updates-feed">
-        {updates.map((update) => {
-          const meta = UPDATE_TYPE_META[update.update_type] || UPDATE_TYPE_META.general
-          const Icon = meta.icon
-          return (
-            <div key={update.id} className={`update-item ${meta.color}`}>
-              <div className="update-item-head">
-                <div className={`update-badge ${meta.color}`}>
-                  <Icon size={11} /> {meta.label}
-                </div>
-                <time className="update-time">
-                  {new Date(update.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
-                </time>
-              </div>
-              <h3 className="update-title">{update.title}</h3>
-              <p className="update-body">{update.body}</p>
+      {!loading && updates.length > 0 && (
+        <div className="updates-feed" style={{ display: 'grid', gap: '12px', marginTop: '16px' }}>
+          {visibleUpdates.map((u) => renderUpdateItem(u))}
+          {fourthUpdate && (
+            <div style={{ position: 'relative', height: '65px', overflow: 'hidden', borderRadius: '4px' }}>
+              {renderUpdateItem(fourthUpdate)}
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(to bottom, transparent 0%, rgba(14,17,21,0.95) 90%)',
+                pointerEvents: 'none',
+              }} />
             </div>
-          )
-        })}
-      </div>
+          )}
+        </div>
+      )}
+
+      {!loading && updates.length > 3 && (
+        <button
+          className="button button-light"
+          style={{ marginTop: '16px', width: '100%', justifyContent: 'center' }}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? 'Show less' : `Show more updates (${updates.length - 3} remaining)`}
+        </button>
+      )}
     </div>
   )
 }
@@ -496,6 +531,7 @@ function CommentsSection({ marketId, authToken, userId }) {
   const [content, setContent] = useState('')
   const [posting, setPosting] = useState(false)
   const [error, setError] = useState('')
+  const [expanded, setExpanded] = useState(false)
 
   async function loadComments() {
     try {
@@ -542,6 +578,45 @@ function CommentsSection({ marketId, authToken, userId }) {
     } catch { /* ignore */ }
   }
 
+  const visibleComments = expanded ? comments : comments.slice(0, 3)
+  const fourthComment = (!expanded && comments.length > 3) ? comments[3] : null
+
+  function renderCommentCard(c) {
+    const name = c.display_name || c.username || 'Backer'
+    const handle = c.username ? `@${c.username}` : ''
+    const initials = name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase()
+    const isMine = c.user_id === userId
+    return (
+      <div key={c.id} className="comment-card panel" style={{ padding: '16px 20px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <div className="avatar avatar-cyan avatar-sm">{initials}</div>
+            <div>
+              <strong style={{ fontSize: '14px', color: '#fff' }}>{name}</strong>
+              {handle && <span style={{ fontSize: '12px', color: '#94a3b8', marginLeft: '6px' }}>{handle}</span>}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <time style={{ fontSize: '12px', color: '#64748b' }}>
+              {new Date(c.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </time>
+            {isMine && (
+              <button
+                className="icon-button"
+                style={{ color: '#ef4444', padding: '2px', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onClick={() => handleDeleteComment(c.id)}
+                title="Delete comment"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+          </div>
+        </div>
+        <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5', color: '#cbd5e1' }}>{c.content}</p>
+      </div>
+    )
+  }
+
   return (
     <div className="comments-section" style={{ marginTop: '3rem' }}>
       <div className="section-title">
@@ -578,43 +653,33 @@ function CommentsSection({ marketId, authToken, userId }) {
         </div>
       )}
 
-      <div className="comments-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {comments.map((c) => {
-          const name = c.display_name || c.username || 'Backer'
-          const handle = c.username ? `@${c.username}` : ''
-          const initials = name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase()
-          const isMine = c.user_id === userId
-          return (
-            <div key={c.id} className="comment-card panel" style={{ padding: '16px 20px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                  <div className="avatar avatar-cyan avatar-sm">{initials}</div>
-                  <div>
-                    <strong style={{ fontSize: '14px', color: '#fff' }}>{name}</strong>
-                    {handle && <span style={{ fontSize: '12px', color: '#94a3b8', marginLeft: '6px' }}>{handle}</span>}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <time style={{ fontSize: '12px', color: '#64748b' }}>
-                    {new Date(c.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </time>
-                  {isMine && (
-                    <button
-                      className="icon-button"
-                      style={{ color: '#ef4444', padding: '2px', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                      onClick={() => handleDeleteComment(c.id)}
-                      title="Delete comment"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </div>
-              </div>
-              <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5', color: '#cbd5e1' }}>{c.content}</p>
+      {!loading && comments.length > 0 && (
+        <div className="comments-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {visibleComments.map((c) => renderCommentCard(c))}
+          {fourthComment && (
+            <div style={{ position: 'relative', height: '55px', overflow: 'hidden', borderRadius: '12px' }}>
+              {renderCommentCard(fourthComment)}
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(to bottom, transparent 0%, rgba(14,17,21,0.95) 90%)',
+                pointerEvents: 'none',
+              }} />
             </div>
-          )
-        })}
-      </div>
+          )}
+        </div>
+      )}
+
+      {!loading && comments.length > 3 && (
+        <button
+          className="button button-light"
+          style={{ marginTop: '16px', width: '100%', justifyContent: 'center' }}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? 'Show less' : `Show more comments (${comments.length - 3} remaining)`}
+        </button>
+      )}
     </div>
   )
 }
+

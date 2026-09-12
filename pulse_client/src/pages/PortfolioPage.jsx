@@ -10,6 +10,7 @@ export default function PortfolioPage() {
   const { authToken } = useAuth()
   const navigate = useNavigate()
   const [holdings, setHoldings] = useState([])
+  const [summary, setSummary] = useState({ totalBought: 0, totalSold: 0 })
   const [markets, setMarkets] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -20,7 +21,11 @@ export default function PortfolioPage() {
           fetch(`${API_URL}/v1/users/me/holdings`, { headers: { Authorization: `Bearer ${authToken}` } }),
           fetch(`${API_URL}/v1/markets`),
         ])
-        if (holdingsRes.ok) { const d = await holdingsRes.json(); setHoldings(d.holdings || []) }
+        if (holdingsRes.ok) {
+          const d = await holdingsRes.json()
+          setHoldings(d.holdings || [])
+          if (d.summary) setSummary(d.summary)
+        }
         if (marketsRes.ok) { const d = await marketsRes.json(); setMarkets((d.markets || []).map(normalizeMarket)) }
       } catch { /* ignore */ }
       setLoading(false)
@@ -29,8 +34,7 @@ export default function PortfolioPage() {
   }, [authToken])
 
   const totalValue = holdings.reduce((s, h) => s + Number(h.token_balance) * Number(h.current_price || 0), 0)
-  const totalInvested = holdings.reduce((s, h) => s + Number(h.total_invested || 0), 0)
-  const totalPnl = totalValue - totalInvested
+  const totalPnl = (totalValue + Number(summary.totalSold || 0)) - Number(summary.totalBought || 0)
   const pnlPositive = totalPnl >= 0
 
   return (

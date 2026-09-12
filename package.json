@@ -8,7 +8,8 @@
     "dev:frontend": "npm run dev --prefix pulse_client",
     "test:backend": "npm test --prefix backend",
     "build:frontend": "npm run build --prefix pulse_client",
-    "lint:frontend": "npm run lint --prefix pulse_client"
+    "lint:frontend": "npm run lint --prefix pulse_client",
+    "bots": "node bots/runBots.js"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

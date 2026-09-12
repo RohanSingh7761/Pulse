@@ -31,9 +31,23 @@ export const marketRouter = Router();
 /* ─── List markets ─────────────────────────────────────────────── */
 marketRouter.get('/', async (request, response, next) => {
   try {
-    const result = await pool.query(`SELECT m.*, c.curve_type, c.base_price, c.slope, c.max_supply
-      FROM person_markets m JOIN bonding_curves c ON c.market_id = m.id
-      WHERE m.status = 'active' ORDER BY m.created_at DESC`);
+    const result = await pool.query(`
+      SELECT m.*, c.curve_type, c.base_price, c.slope, c.max_supply,
+        CASE
+          WHEN COALESCE(pt.price, m.current_price) > 0 THEN
+            ROUND(((m.current_price - COALESCE(pt.price, m.current_price)) / COALESCE(pt.price, m.current_price) * 100), 2)
+          ELSE 0
+        END AS change
+      FROM person_markets m
+      JOIN bonding_curves c ON c.market_id = m.id
+      LEFT JOIN LATERAL (
+        SELECT price FROM price_ticks
+        WHERE market_id = m.id AND created_at >= NOW() - INTERVAL '24 hours'
+        ORDER BY created_at ASC LIMIT 1
+      ) pt ON true
+      WHERE m.status = 'active'
+      ORDER BY m.created_at DESC
+    `);
     response.json({ markets: result.rows });
   } catch (error) { next(error); }
 });
@@ -93,16 +107,26 @@ marketRouter.get('/:id', async (request, response, next) => {
       `SELECT m.*, c.curve_type, c.base_price, c.slope, c.max_supply,
               u.username, u.display_name, u.bio, u.avatar_url,
               p.headline, p.category, p.location, p.website_url,
-              p.twitter_url, p.github_url, p.linkedin_url
+              p.twitter_url, p.github_url, p.linkedin_url,
+              COALESCE(pt.price, m.current_price) AS baseline_price
        FROM person_markets m
        JOIN bonding_curves c ON c.market_id = m.id
        JOIN users u ON u.id = m.user_id
        LEFT JOIN profiles p ON p.user_id = m.user_id
+       LEFT JOIN LATERAL (
+         SELECT price FROM price_ticks
+         WHERE market_id = m.id AND created_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY created_at ASC LIMIT 1
+       ) pt ON true
        WHERE m.id = $1`,
       [request.params.id]
     );
     if (!result.rows[0]) return response.status(404).json({ error: 'market_not_found' });
     const row = result.rows[0];
+    const baselinePrice = Number(row.baseline_price || row.current_price || 1);
+    const currentPrice = Number(row.current_price || 0);
+    const change = baselinePrice > 0 ? Number(((currentPrice - baselinePrice) / baselinePrice * 100).toFixed(2)) : 0;
+
     const market = {
       id: row.id, user_id: row.user_id, name: row.name, symbol: row.symbol, status: row.status,
       token_id: row.token_id, token_decimals: row.token_decimals,
@@ -110,6 +134,7 @@ marketRouter.get('/:id', async (request, response, next) => {
       current_price: row.current_price, circulating_supply: row.circulating_supply,
       reserve_balance: row.reserve_balance, total_volume: row.total_volume, holder_count: row.holder_count,
       curve_type: row.curve_type, base_price: row.base_price, slope: row.slope, max_supply: row.max_supply,
+      change,
       created_at: row.created_at, updated_at: row.updated_at,
     };
     const creator = {
@@ -234,19 +259,22 @@ marketRouter.post('/:id/trades/:tradeId/confirm', requireAuth, async (request, r
       if (isBuy) {
         await client.query(
           `INSERT INTO holdings (user_id, market_id, token_balance, average_entry_price, total_invested)
-           VALUES ($1, $2, $3, $4, $5)
+           VALUES ($1, $2, $3::numeric, $4::numeric / NULLIF($3::numeric, 0), $4::numeric)
            ON CONFLICT (user_id, market_id) DO UPDATE SET
-             average_entry_price = (holdings.total_invested + EXCLUDED.total_invested) / (holdings.token_balance + EXCLUDED.token_balance),
+             average_entry_price = (holdings.total_invested + EXCLUDED.total_invested) / NULLIF(holdings.token_balance + EXCLUDED.token_balance, 0),
              total_invested = holdings.total_invested + EXCLUDED.total_invested,
              token_balance = holdings.token_balance + EXCLUDED.token_balance,
              updated_at = now()`,
-          [request.user.sub, trade.market_id, trade.token_amount, trade.execution_price, trade.settlement_amount]
+          [request.user.sub, trade.market_id, Number(trade.token_amount), Number(trade.settlement_amount)]
         );
       } else {
         await client.query(
-          `UPDATE holdings SET token_balance = GREATEST(0, token_balance - $1), updated_at = now()
+          `UPDATE holdings SET
+             total_invested = GREATEST(0, total_invested * (GREATEST(0, token_balance - $1::numeric) / NULLIF(token_balance, 0))),
+             token_balance = GREATEST(0, token_balance - $1::numeric),
+             updated_at = now()
            WHERE user_id = $2 AND market_id = $3`,
-          [trade.token_amount, request.user.sub, trade.market_id]
+          [Number(trade.token_amount), request.user.sub, trade.market_id]
         );
       }
 

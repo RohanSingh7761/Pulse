@@ -45,7 +45,7 @@ userRouter.patch('/me', async (request, response, next) => {
 
 userRouter.get('/me/holdings', async (request, response, next) => {
   try {
-    const result = await pool.query(
+    const holdingsResult = await pool.query(
       `SELECT h.token_balance, h.average_entry_price, h.total_invested,
               m.id, m.name, m.symbol, m.current_price, m.circulating_supply,
               m.reserve_balance, m.holder_count, m.total_volume, m.token_id,
@@ -56,6 +56,21 @@ userRouter.get('/me/holdings', async (request, response, next) => {
        ORDER BY h.updated_at DESC`,
       [request.user.sub]
     );
-    response.json({ holdings: result.rows });
+
+    const statsResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN trade_type = 'buy' THEN settlement_amount ELSE 0 END), 0) AS total_bought,
+         COALESCE(SUM(CASE WHEN trade_type = 'sell' THEN settlement_amount ELSE 0 END), 0) AS total_sold
+       FROM trades
+       WHERE user_id = $1 AND status = 'confirmed'`,
+      [request.user.sub]
+    );
+
+    const summary = {
+      totalBought: Number(statsResult.rows[0]?.total_bought || 0),
+      totalSold: Number(statsResult.rows[0]?.total_sold || 0),
+    };
+
+    response.json({ holdings: holdingsResult.rows, summary });
   } catch (error) { next(error); }
 });

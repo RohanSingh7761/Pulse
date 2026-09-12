@@ -23,10 +23,12 @@ export default function MarketplacePage() {
         if (!res.ok) return
         const payload = await res.json()
         setMarkets((payload.markets || []).map(normalizeMarket))
-      } catch { setMarkets([]) }
+      } catch { /* ignore error on background poll */ }
       setLoading(false)
     }
     load()
+    const timer = setInterval(load, 4000)
+    return () => clearInterval(timer)
   }, [])
 
   const categories = useMemo(() => {

@@ -1,17 +1,46 @@
-import { useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { formatCurrency } from '../../lib/constants'
 
-export default function CandleChart({ ticks = [], mode = 'Candles', basePrice = 1 }) {
+export default function CandleChart({ ticks = [], timeframe = '1D', basePrice = 1 }) {
+  const [hoveredIndex, setHoveredIndex] = useState(null)
+
   const chartData = useMemo(() => {
+    let filteredTicks = Array.isArray(ticks) ? [...ticks] : []
+
+    if (filteredTicks.length > 0 && timeframe !== 'ALL') {
+      const now = Date.now()
+      let cutoff = 0
+
+      if (timeframe === '1D') cutoff = now - 24 * 60 * 60 * 1000
+      else if (timeframe === '5D') cutoff = now - 5 * 24 * 60 * 60 * 1000
+      else if (timeframe === '1M') cutoff = now - 30 * 24 * 60 * 60 * 1000
+      else if (timeframe === '1Y') cutoff = now - 365 * 24 * 60 * 60 * 1000
+      else if (timeframe === 'YTD') {
+        cutoff = new Date(new Date().getFullYear(), 0, 1).getTime()
+      }
+
+      if (cutoff > 0) {
+        const afterCutoff = filteredTicks.filter((t) => {
+          if (!t.created_at) return true
+          return new Date(t.created_at).getTime() >= cutoff
+        })
+        if (afterCutoff.length > 0) {
+          filteredTicks = afterCutoff
+        }
+      }
+    }
+
     let prices = []
     let timestamps = []
 
-    if (Array.isArray(ticks) && ticks.length > 0) {
-      prices = ticks.map((t) => Number(t.price || 0))
-      timestamps = ticks.map((t) => {
+    if (filteredTicks.length > 0) {
+      prices = filteredTicks.map((t) => Number(t.price || 0))
+      timestamps = filteredTicks.map((t) => {
         if (!t.created_at) return ''
         const d = new Date(t.created_at)
-        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        return timeframe === '1D'
+          ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          : d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       })
     }
 
@@ -49,28 +78,31 @@ export default function CandleChart({ ticks = [], mode = 'Candles', basePrice = 
     const points = prices.map((p, idx) => {
       const x = (idx / Math.max(1, prices.length - 1)) * width
       const y = height - ((p - minPrice) / range) * (height - 20) - 10
-      return { x, y, price: p }
+      return { x, y, price: p, timestamp: timestamps[idx] || '' }
     })
 
     const svgPolyline = points.map((pt) => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' ')
     const svgArea = `0,${height} ${svgPolyline} ${width},${height}`
 
-    const candleCount = Math.min(24, Math.max(8, prices.length))
-    const chunkSize = Math.max(1, Math.floor(prices.length / candleCount))
-    const candles = []
-    for (let i = 0; i < prices.length; i += chunkSize) {
-      const chunk = prices.slice(i, i + chunkSize)
-      const open = chunk[0]
-      const close = chunk[chunk.length - 1]
-      const high = Math.max(...chunk)
-      const low = Math.min(...chunk)
-      const isGreen = close >= open
-      const pctHeight = Math.max(12, Math.min(90, ((high - minPrice) / range) * 100))
-      candles.push({ open, close, high, low, isGreen, pctHeight })
-    }
+    return { yLabels, xLabels, points, svgPolyline, svgArea }
+  }, [ticks, timeframe, basePrice])
 
-    return { yLabels, xLabels, points, svgPolyline, svgArea, candles }
-  }, [ticks, basePrice])
+  const handleMouseMove = (e) => {
+    if (!chartData.points || chartData.points.length === 0) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const pct = Math.max(0, Math.min(1, mouseX / rect.width))
+    const index = Math.round(pct * (chartData.points.length - 1))
+    setHoveredIndex(index)
+  }
+
+  const handleMouseLeave = () => {
+    setHoveredIndex(null)
+  }
+
+  const activePoint = (hoveredIndex !== null && chartData.points[hoveredIndex])
+    ? chartData.points[hoveredIndex]
+    : null
 
   return (
     <div className="candle-chart">
@@ -85,36 +117,85 @@ export default function CandleChart({ ticks = [], mode = 'Candles', basePrice = 
           <i /><i /><i /><i /><i />
         </div>
 
-        {mode === 'Line' ? (
-          <div className="line-chart-container" style={{ position: 'relative', width: '100%', height: '100%' }}>
-            <svg viewBox="0 0 600 220" preserveAspectRatio="none" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
-              <defs>
-                <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.3" />
-                  <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.0" />
-                </linearGradient>
-              </defs>
-              <polygon points={chartData.svgArea} fill="url(#chartGrad)" />
-              <polyline points={chartData.svgPolyline} fill="none" stroke="#06b6d4" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
-              {chartData.points.map((pt, idx) => (
-                <circle key={idx} cx={pt.x} cy={pt.y} r="3" fill="#06b6d4" />
-              ))}
-            </svg>
-          </div>
-        ) : (
-          <div className="candles">
-            {chartData.candles.map((candle, idx) => (
-              <span
+        <div
+          className="line-chart-container"
+          style={{ position: 'relative', width: '100%', height: '100%', cursor: 'crosshair' }}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        >
+          <svg viewBox="0 0 600 220" preserveAspectRatio="none" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
+            <defs>
+              <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.3" />
+                <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.0" />
+              </linearGradient>
+            </defs>
+            <polygon points={chartData.svgArea} fill="url(#chartGrad)" />
+            <polyline points={chartData.svgPolyline} fill="none" stroke="#06b6d4" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+            {chartData.points.map((pt, idx) => (
+              <circle
                 key={idx}
-                className={`candle ${!candle.isGreen ? 'red' : ''}`}
-                style={{ '--height': `${candle.pctHeight}%`, '--delay': `${idx * 0.02}s` }}
-                title={`High: ${candle.high.toFixed(4)} / Low: ${candle.low.toFixed(4)}`}
-              >
-                <i />
-              </span>
+                cx={pt.x}
+                cy={pt.y}
+                r={hoveredIndex === idx ? 5 : 3}
+                fill={hoveredIndex === idx ? '#38bdf8' : '#06b6d4'}
+              />
             ))}
-          </div>
-        )}
+
+            {activePoint && (
+              <g>
+                <line
+                  x1={activePoint.x}
+                  y1="0"
+                  x2={activePoint.x}
+                  y2="220"
+                  stroke="rgba(6, 182, 212, 0.5)"
+                  strokeWidth="1.5"
+                  strokeDasharray="4 4"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <circle
+                  cx={activePoint.x}
+                  cy={activePoint.y}
+                  r="6"
+                  fill="#06b6d4"
+                  stroke="#ffffff"
+                  strokeWidth="2"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </g>
+            )}
+          </svg>
+
+          {activePoint && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '6px',
+                left: activePoint.x > 400 ? 'auto' : `${Math.max(5, (activePoint.x / 600) * 100 - 10)}%`,
+                right: activePoint.x > 400 ? `${Math.max(5, 100 - (activePoint.x / 600) * 100 - 10)}%` : 'auto',
+                background: 'rgba(11, 15, 20, 0.95)',
+                border: '1px solid rgba(6, 182, 212, 0.6)',
+                boxShadow: '0 4px 14px rgba(0, 0, 0, 0.6)',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                pointerEvents: 'none',
+                zIndex: 10,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '2px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace' }}>
+                {activePoint.timestamp ? activePoint.timestamp : 'Detail'}
+              </span>
+              <strong style={{ fontSize: '13px', color: '#38bdf8', fontFamily: 'monospace', fontWeight: 600 }}>
+                {formatCurrency(activePoint.price)}
+              </strong>
+            </div>
+          )}
+        </div>
 
         <div className="chart-x-axis">
           {chartData.xLabels.map((lbl, idx) => (
@@ -125,3 +206,4 @@ export default function CandleChart({ ticks = [], mode = 'Candles', basePrice = 
     </div>
   )
 }
+
