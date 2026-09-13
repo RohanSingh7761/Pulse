@@ -3,15 +3,17 @@ import { env } from '../config/env.js';
 
 const { Pool } = pg;
 
+const isSslNeeded = env.PGSSL || env.DATABASE_URL?.includes('sslmode=require') || env.DATABASE_URL?.includes('neon.tech');
+
 export const pool = new Pool(env.DATABASE_URL
-  ? { connectionString: env.DATABASE_URL, ssl: env.PGSSL ? { rejectUnauthorized: false } : false }
+  ? { connectionString: env.DATABASE_URL, ssl: isSslNeeded ? { rejectUnauthorized: false } : false }
   : {
       host: env.PGHOST,
       port: env.PGPORT,
       database: env.PGDATABASE,
       user: env.PGUSER,
       password: env.PGPASSWORD,
-      ssl: env.PGSSL ? { rejectUnauthorized: false } : false
+      ssl: isSslNeeded ? { rejectUnauthorized: false } : false
     });
 
 export async function checkDatabase() {
