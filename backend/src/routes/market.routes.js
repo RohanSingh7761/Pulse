@@ -79,10 +79,14 @@ marketRouter.post('/', requireAuth, async (request, response, next) => {
     response.status(201).json({ market: updated.rows[0], token, chainMarket });
   } catch (error) {
     if (marketId) {
-      await database.query(`UPDATE person_markets SET status = 'failed', creation_status = CASE WHEN token_id IS NULL THEN 'failed' ELSE 'confirmed' END,
-        token_id = COALESCE($1, token_id), creation_transaction_id = COALESCE($2, creation_transaction_id) WHERE id = $3`, [token?.tokenId || null, token?.transactionId || null, marketId]);
-      if (token) await logActivity('market.token_created.registration_failed', { userId: request.user.sub, marketId, tokenId: token.tokenId, tokenTransactionId: token.transactionId, error: error.message });
-      if (token) return response.status(202).json({ partial: true, message: 'HTS token created, but market registration failed. Keep this token ID and resolve registration before retrying.', marketId, token });
+      if (!token) {
+        await database.query('DELETE FROM person_markets WHERE id = $1', [marketId]);
+      } else {
+        await database.query(`UPDATE person_markets SET status = 'failed', creation_status = 'confirmed',
+          token_id = $1, creation_transaction_id = $2 WHERE id = $3`, [token.tokenId, token.transactionId, marketId]);
+        await logActivity('market.token_created.registration_failed', { userId: request.user.sub, marketId, tokenId: token.tokenId, tokenTransactionId: token.transactionId, error: error.message });
+        return response.status(202).json({ partial: true, message: 'HTS token created, but market registration failed. Keep this token ID and resolve registration before retrying.', marketId, token });
+      }
     }
     next(error);
   } finally { database.release(); }
